@@ -30,12 +30,12 @@ use Apkk\LaravelSecurityGuard\Repositories\EloquentAdminAllowedIpRepository;
 use Apkk\LaravelSecurityGuard\Repositories\EloquentBlockedIpRepository;
 use Apkk\LaravelSecurityGuard\Services\AdminIpAccessService;
 use Apkk\LaravelSecurityGuard\Services\BlockResponseFactory;
+use Apkk\LaravelSecurityGuard\Services\CidrIpMatcher;
 use Apkk\LaravelSecurityGuard\Services\ConfigAdminSubjectResolver;
 use Apkk\LaravelSecurityGuard\Services\ConfigAttackPathMatcher;
 use Apkk\LaravelSecurityGuard\Services\ConfigurationDoctor;
 use Apkk\LaravelSecurityGuard\Services\DailyLimiter;
 use Apkk\LaravelSecurityGuard\Services\ErrorNotificationGuard;
-use Apkk\LaravelSecurityGuard\Services\ExactIpMatcher;
 use Apkk\LaravelSecurityGuard\Services\IpBlockService;
 use Apkk\LaravelSecurityGuard\Services\LaravelRequestIpResolver;
 use Apkk\LaravelSecurityGuard\Services\NotificationDeliveryState;
@@ -136,7 +136,7 @@ class SecurityGuardServiceProvider extends ServiceProvider
                 : $app->make(LaravelRequestIpResolver::class);
         });
 
-        $this->app->singleton(IpMatcherContract::class, ExactIpMatcher::class);
+        $this->app->singleton(IpMatcherContract::class, CidrIpMatcher::class);
         $this->app->singleton(AttackPathMatcherContract::class, ConfigAttackPathMatcher::class);
         $this->app->singleton(BlockedIpRepositoryContract::class, EloquentBlockedIpRepository::class);
         $this->app->singleton(AdminAllowedIpRepositoryContract::class, EloquentAdminAllowedIpRepository::class);

@@ -12,6 +12,14 @@ use Apkk\LaravelSecurityGuard\Support\Ip;
  *
  * Entries that are not valid addresses are ignored rather than treated as
  * wildcards.
+ *
+ * This was the default through v0.1.x. CidrIpMatcher replaced it in v0.2.0 and
+ * is a superset — a bare address behaves identically under both. Bind this one
+ * explicitly only to refuse CIDR entries outright:
+ *
+ *     $this->app->singleton(IpMatcherContract::class, ExactIpMatcher::class);
+ *
+ * Note that doing so makes a CIDR entry match nothing at all, silently.
  */
 class ExactIpMatcher implements IpMatcherContract
 {
