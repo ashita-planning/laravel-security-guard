@@ -92,6 +92,58 @@ class SecurityEventDataTest extends TestCase
         $this->assertSame('ip_blocked:42', $restored->uniqueId());
     }
 
+    public function test_it_rejects_an_identifier_that_is_not_key_shaped(): void
+    {
+        // A custom repository decides this value, and it lands in the message
+        // body and the job's unique key.
+        $event = new SecurityEventData(
+            type: SecurityEventData::TYPE_IP_BLOCKED,
+            blockId: '1; DROP TABLE users--',
+            reasonCode: BlockReason::RATE_LIMIT,
+            ipAddress: '203.0.113.10',
+        );
+
+        $this->assertSame('unknown', $event->blockId);
+    }
+
+    public function test_it_accepts_the_key_shapes_hosts_actually_use(): void
+    {
+        foreach ([42, '42', '01JQZ0X9K5R7YB3H2N8M4T6VWX', 'c7a1f0e2-3b4c-4d5e-8f90-1a2b3c4d5e6f'] as $id) {
+            $event = new SecurityEventData(
+                type: SecurityEventData::TYPE_IP_BLOCKED,
+                blockId: $id,
+                reasonCode: BlockReason::RATE_LIMIT,
+                ipAddress: '203.0.113.10',
+            );
+
+            $this->assertSame($id, $event->blockId);
+        }
+    }
+
+    public function test_it_replaces_an_unrecognised_reason_code(): void
+    {
+        $event = new SecurityEventData(
+            type: SecurityEventData::TYPE_IP_BLOCKED,
+            blockId: 1,
+            reasonCode: "rate_limit\nX-Injected: header",
+            ipAddress: '203.0.113.10',
+        );
+
+        $this->assertSame('unknown', $event->reasonCode);
+    }
+
+    public function test_error_events_reject_a_reference_that_is_not_key_shaped(): void
+    {
+        $event = new ErrorEventData(
+            environment: 'production',
+            area: 'front',
+            notificationType: 'front_error',
+            reportReference: 'https://evil.example/leak?token=abc',
+        );
+
+        $this->assertSame('unknown', $event->reportReference);
+    }
+
     public function test_error_events_reject_free_text_in_their_identifier_fields(): void
     {
         $event = new ErrorEventData(

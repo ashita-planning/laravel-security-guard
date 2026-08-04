@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Apkk\LaravelSecurityGuard\Services;
 
-use Apkk\LaravelSecurityGuard\Support\CacheKeys;
+use Apkk\LaravelSecurityGuard\Support\CacheKeyFactory;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Support\Carbon;
 use Throwable;
@@ -18,12 +18,15 @@ use Throwable;
  */
 class NotificationSuspension
 {
-    public function __construct(private readonly CacheRepository $cache) {}
+    public function __construct(
+        private readonly CacheRepository $cache,
+        private readonly CacheKeyFactory $cacheKeys,
+    ) {}
 
     public function isSuspended(string $scope, string $channel): bool
     {
         try {
-            return (bool) $this->cache->get(CacheKeys::suspendedChannel($scope, $channel), false);
+            return (bool) $this->cache->get($this->cacheKeys->suspendedChannel($scope, $channel), false);
         } catch (Throwable) {
             return false;
         }
@@ -33,7 +36,7 @@ class NotificationSuspension
     {
         try {
             $this->cache->put(
-                CacheKeys::suspendedChannel($scope, $channel),
+                $this->cacheKeys->suspendedChannel($scope, $channel),
                 true,
                 Carbon::now()->endOfMonth(),
             );
@@ -45,7 +48,7 @@ class NotificationSuspension
     public function resume(string $scope, string $channel): void
     {
         try {
-            $this->cache->forget(CacheKeys::suspendedChannel($scope, $channel));
+            $this->cache->forget($this->cacheKeys->suspendedChannel($scope, $channel));
         } catch (Throwable) {
             //
         }

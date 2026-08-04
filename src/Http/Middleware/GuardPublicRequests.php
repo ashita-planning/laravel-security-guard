@@ -42,7 +42,7 @@ class GuardPublicRequests
      */
     public function handle(Request $request, Closure $next): Response
     {
-        if (! $this->config->get('security-guard.enabled', true) || $this->isExcluded($request)) {
+        if (! $this->config->get('security-guard.enabled', true)) {
             return $next($request);
         }
 
@@ -57,7 +57,11 @@ class GuardPublicRequests
             return $next($request);
         }
 
-        if ($this->config->get('security-guard.permanent_block.enabled', true)) {
+        // Each module honours its own exclusion list. Excusing a webhook from
+        // request counting must not also stop serving 403s to an address that
+        // is already blocked, nor stop detecting attack paths underneath it.
+        if ($this->config->get('security-guard.permanent_block.enabled', true)
+            && ! $this->matchesAny($request, 'security-guard.permanent_block.excluded_paths')) {
             if ($this->blockService->isBlocked($ipAddress)) {
                 return $this->responses->blocked();
             }
@@ -69,7 +73,8 @@ class GuardPublicRequests
             }
         }
 
-        if (! $this->config->get('security-guard.public_rate_limit.enabled', false)) {
+        if (! $this->config->get('security-guard.public_rate_limit.enabled', false)
+            || $this->matchesAny($request, 'security-guard.public_rate_limit.excluded_paths')) {
             return $next($request);
         }
 
@@ -133,10 +138,10 @@ class GuardPublicRequests
         return $this->responses->blocked();
     }
 
-    private function isExcluded(Request $request): bool
+    private function matchesAny(Request $request, string $configKey): bool
     {
-        foreach ((array) $this->config->get('security-guard.public_rate_limit.excluded_paths', []) as $pattern) {
-            if (is_string($pattern) && $request->is($pattern)) {
+        foreach ((array) $this->config->get($configKey, []) as $pattern) {
+            if (is_string($pattern) && $pattern !== '' && $request->is($pattern)) {
                 return true;
             }
         }

@@ -138,6 +138,21 @@ regexは設定者が追加できるため、ReDoSを避ける観点でレビュ�
 
 有効化する前に、サーバー間通信を行うルート（webhook、認証callback、トラッキング、ヘルスチェック）を棚卸しして除外してください。
 
+### 除外リストはモジュールごとに独立しています
+
+`public_rate_limit.excluded_paths` が無効化するのは**回数カウントだけ**です。除外したパスでも、遮断済みIPは403のままで、攻撃パス検知も動作し続けます。
+
+レート制限は「容量の制御」、遮断は「セキュリティの制御」であり、webhookをレート制限から外したい要求が、そのパスの防御まで外す理由にはならないためです。
+
+遮断と攻撃パス検知そのものを免除したい場合は、別のリストを明示的に使います。
+
+```php
+'permanent_block' => [
+    // 既定は空。ここへ追加したパスでは、遮断済みIPも通常どおり応答されます
+    'excluded_paths' => [],
+],
+```
+
 ## 管理領域IP許可リスト
 
 特定のUserモデルや主キー型に依存しません。認証主体は`subject_type`と`subject_id`で識別します。
@@ -238,6 +253,19 @@ if (! app(SubmissionTokenService::class)->consume($request, 'contact', $request-
 
 検証結果にかかわらずトークンは再利用できません。使用済みhashは共有cacheに保存されるため、並行送信でも成功するのは1回だけです。
 
+## 共有キャッシュでの名前空間
+
+複数アプリで1台のRedisを共有する場合、`cache.prefix` をアプリごとに変えてください。既定値のままだと、stagingが日次通知上限を使い切ると本番の通知が止まり、片方での解除がもう片方の遮断キャッシュにも影響します。
+
+```php
+'cache' => [
+    'store' => env('SECURITY_GUARD_CACHE_STORE'),
+    'prefix' => env('APP_NAME', 'security-guard'),
+],
+```
+
+キーにIPやメールアドレスの平文は入りません（SHA-256でhash化されます）。
+
 ## 通知
 
 ```php
@@ -293,6 +321,30 @@ $url = app(ErrorNotificationGuard::class)->sanitizeUrl($request->fullUrl());
 ```
 
 上限到達時の扱い（`mark_handled` / `hold`）と送信結果は`ErrorNotificationOutcomeHandlerContract`を実装してバインドすると受け取れます。
+
+集約バッファには保持件数の上限があります。エラー嵐で最も速く膨らむのがこのバッファのため、上限超過分は保持されませんが**件数としては数え続け**、通知本文には実際の発生件数が出ます（`Occurrences: 1200 (showing 50)`）。
+
+```php
+'error_notifications' => [
+    'aggregation_delay_seconds' => 60,
+    'cooldown_minutes' => 10,
+    'daily_limits' => ['line' => 4, 'mail' => 4],
+    'on_limit' => 'mark_handled', // mark_handled | hold
+    'max_aggregated_events' => 50,
+],
+```
+
+通知の送信失敗はqueueのリトライ対象になります。成功済みchannelは記録されるため、再送は**失敗したchannelだけ**を対象とし、日次上限もイベントごとに1回しか消費しません。宛先未設定などリトライで解決しない失敗は再送されません。
+
+## 診断ログの注意
+
+ドライバの例外メッセージにはDSNや文の bind 値が含まれることがあります。ログを外部へ転送している場合は次で本文を落とせます（例外クラスは常に記録されます）。
+
+```php
+'logging' => [
+    'include_exception_messages' => false,
+],
+```
 
 ## 管理UI
 

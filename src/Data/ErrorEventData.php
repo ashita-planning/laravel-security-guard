@@ -23,11 +23,13 @@ final class ErrorEventData
 
     public readonly ?string $exceptionClass;
 
+    public readonly int|string $reportReference;
+
     public function __construct(
         string $environment,
         string $area,
         string $notificationType,
-        public readonly int|string $reportReference,
+        int|string $reportReference,
         ?string $exceptionClass = null,
         public readonly ?DateTimeImmutable $occurredAt = null,
     ) {
@@ -35,6 +37,9 @@ final class ErrorEventData
         $this->area = self::safeToken($area) ?? 'unknown';
         $this->notificationType = self::safeToken($notificationType) ?? 'unknown';
         $this->exceptionClass = self::safeClassName($exceptionClass);
+        // Printed into the notification body, so it is held to an identifier
+        // shape even though the host supplies it.
+        $this->reportReference = self::safeIdentifier($reportReference);
     }
 
     /**
@@ -80,6 +85,21 @@ final class ErrorEventData
         $value = trim($value);
 
         return preg_match('/^[A-Za-z0-9_.\-]{1,100}$/', $value) === 1 ? $value : null;
+    }
+
+    /**
+     * Report references are integers, UUIDs or ULIDs. Anything else is replaced
+     * rather than concatenated into a notification.
+     */
+    private static function safeIdentifier(int|string $value): int|string
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+
+        $value = trim($value);
+
+        return preg_match('/^[A-Za-z0-9_\-]{1,64}$/', $value) === 1 ? $value : 'unknown';
     }
 
     private static function safeClassName(?string $value): ?string

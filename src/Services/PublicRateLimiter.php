@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Apkk\LaravelSecurityGuard\Services;
 
 use Apkk\LaravelSecurityGuard\Data\BlockReason;
-use Apkk\LaravelSecurityGuard\Support\CacheKeys;
+use Apkk\LaravelSecurityGuard\Support\CacheKeyFactory;
 use Illuminate\Cache\RateLimiter;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 
@@ -26,6 +26,7 @@ class PublicRateLimiter
     public function __construct(
         private readonly IpBlockService $blockService,
         private readonly RateLimiter $rateLimiter,
+        private readonly CacheKeyFactory $cacheKeys,
         private readonly ConfigRepository $config,
     ) {}
 
@@ -34,7 +35,7 @@ class PublicRateLimiter
      */
     public function consume(string $normalizedIp): array
     {
-        $key = CacheKeys::publicRequests($normalizedIp);
+        $key = $this->cacheKeys->publicRequests($normalizedIp);
         $attempts = $this->rateLimiter->hit($key, 60);
         $limit = $this->limit();
 
@@ -52,11 +53,13 @@ class PublicRateLimiter
         $blockedNow = false;
 
         if ($action === self::ACTION_PERMANENT_BLOCK) {
+            // Only the call that actually transitioned the address reports
+            // `blocked_now`, so a sustained flood logs once, not per request.
             $blockedNow = $this->blockService->block(
                 $normalizedIp,
                 BlockReason::RATE_LIMIT,
                 requestCount: $attempts,
-            ) !== null;
+            )?->isNewBlock ?? false;
         } elseif ($action === self::ACTION_TEMPORARY_BLOCK) {
             $blockedNow = $this->blockService->blockTemporarily($normalizedIp, $this->temporaryMinutes());
         }
@@ -76,7 +79,7 @@ class PublicRateLimiter
     public function status(string $normalizedIp): array
     {
         return [
-            'attempts' => $this->rateLimiter->attempts(CacheKeys::publicRequests($normalizedIp)),
+            'attempts' => $this->rateLimiter->attempts($this->cacheKeys->publicRequests($normalizedIp)),
             'blocked' => $this->blockService->isBlocked($normalizedIp),
         ];
     }

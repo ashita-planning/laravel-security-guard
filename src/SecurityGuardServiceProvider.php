@@ -36,12 +36,14 @@ use Apkk\LaravelSecurityGuard\Services\ErrorNotificationGuard;
 use Apkk\LaravelSecurityGuard\Services\ExactIpMatcher;
 use Apkk\LaravelSecurityGuard\Services\IpBlockService;
 use Apkk\LaravelSecurityGuard\Services\LaravelRequestIpResolver;
+use Apkk\LaravelSecurityGuard\Services\NotificationDeliveryState;
 use Apkk\LaravelSecurityGuard\Services\NotificationSuspension;
 use Apkk\LaravelSecurityGuard\Services\PublicRateLimiter;
 use Apkk\LaravelSecurityGuard\Services\QueuedSecurityEventDispatcher;
 use Apkk\LaravelSecurityGuard\Services\RemoteAddrIpResolver;
 use Apkk\LaravelSecurityGuard\Services\SensitiveRouteLimiter;
 use Apkk\LaravelSecurityGuard\Services\SubmissionTokenService;
+use Apkk\LaravelSecurityGuard\Support\CacheKeyFactory;
 use Apkk\LaravelSecurityGuard\Support\FailureLogger;
 use Illuminate\Cache\RateLimiter as CacheRateLimiter;
 use Illuminate\Contracts\Bus\Dispatcher;
@@ -109,6 +111,12 @@ class SecurityGuardServiceProvider extends ServiceProvider
         $this->app->singleton(self::RATE_LIMITER, fn ($app): CacheRateLimiter => new CacheRateLimiter(
             $app->make(self::CACHE),
         ));
+
+        // Namespaces every key this package writes. Two applications sharing a
+        // Redis server must not share block state or notification counters.
+        $this->app->singleton(CacheKeyFactory::class, fn ($app): CacheKeyFactory => new CacheKeyFactory(
+            $app->make(ConfigRepository::class)->get('security-guard.cache.prefix'),
+        ));
     }
 
     private function registerContracts(): void
@@ -142,12 +150,14 @@ class SecurityGuardServiceProvider extends ServiceProvider
             $app->make(SecurityEventDispatcherContract::class),
             $app->make(IpMatcherContract::class),
             $app->make(self::RATE_LIMITER),
+            $app->make(CacheKeyFactory::class),
             $app->make(FailureLogger::class),
         ));
 
         $this->app->singleton(PublicRateLimiter::class, fn ($app): PublicRateLimiter => new PublicRateLimiter(
             $app->make(IpBlockService::class),
             $app->make(self::RATE_LIMITER),
+            $app->make(CacheKeyFactory::class),
             $app->make(ConfigRepository::class),
         ));
 
@@ -158,26 +168,40 @@ class SecurityGuardServiceProvider extends ServiceProvider
             $app,
             $app->make('log'),
             $app->make(BlockResponseFactory::class),
+            $app->make(CacheKeyFactory::class),
         ));
 
         $this->app->singleton(SubmissionTokenService::class, fn ($app): SubmissionTokenService => new SubmissionTokenService(
             $app->make(self::CACHE),
+            $app->make(CacheKeyFactory::class),
             $app->make(ConfigRepository::class),
         ));
 
         $this->app->singleton(DailyLimiter::class, fn ($app): DailyLimiter => new DailyLimiter(
             $app->make(self::CACHE),
+            $app->make(CacheKeyFactory::class),
             $app->make(FailureLogger::class),
         ));
 
         $this->app->singleton(NotificationSuspension::class, fn ($app): NotificationSuspension => new NotificationSuspension(
             $app->make(self::CACHE),
+            $app->make(CacheKeyFactory::class),
         ));
+
+        $this->app->singleton(
+            NotificationDeliveryState::class,
+            fn ($app): NotificationDeliveryState => new NotificationDeliveryState(
+                $app->make(self::CACHE),
+                $app->make(CacheKeyFactory::class),
+                $app->make(FailureLogger::class),
+            ),
+        );
 
         $this->app->singleton(ErrorNotificationGuard::class, fn ($app): ErrorNotificationGuard => new ErrorNotificationGuard(
             $app->make(self::CACHE),
             $app->make(ConfigRepository::class),
             $app->make(Dispatcher::class),
+            $app->make(CacheKeyFactory::class),
             $app->make(FailureLogger::class),
             // Optional: hosts bind this to reconcile their own report rows.
             $app->bound(Contracts\ErrorNotificationOutcomeHandlerContract::class)

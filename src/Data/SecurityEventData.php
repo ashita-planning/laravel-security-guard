@@ -25,10 +25,14 @@ final class SecurityEventData
 
     public readonly ?string $matchedPattern;
 
+    public readonly int|string $blockId;
+
+    public readonly string $reasonCode;
+
     public function __construct(
         string $type,
-        public readonly int|string $blockId,
-        public readonly string $reasonCode,
+        int|string $blockId,
+        string $reasonCode,
         ?string $ipAddress,
         public readonly ?DateTimeImmutable $detectedAt = null,
         ?string $matchedPattern = null,
@@ -37,6 +41,11 @@ final class SecurityEventData
         $this->type = self::safeToken($type) ?? 'security_event';
         $this->ipAddress = Ip::normalize($ipAddress);
         $this->matchedPattern = self::safeToken($matchedPattern);
+        // The id reaches the notification body and the job's unique key. A
+        // custom repository could return anything as a primary key, so it is
+        // held to the same identifier shape as every other field here.
+        $this->blockId = self::safeIdentifier($blockId);
+        $this->reasonCode = self::safeToken($reasonCode) ?? 'unknown';
     }
 
     public static function ipBlocked(BlockedIpRecord $record): self
@@ -121,5 +130,20 @@ final class SecurityEventData
         $value = trim($value);
 
         return preg_match('/^[A-Za-z0-9_.\-]{1,100}$/', $value) === 1 ? $value : null;
+    }
+
+    /**
+     * Primary keys are integers, UUIDs or ULIDs. Anything else is replaced
+     * rather than passed through to a message body or a cache key.
+     */
+    private static function safeIdentifier(int|string $value): int|string
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+
+        $value = trim($value);
+
+        return preg_match('/^[A-Za-z0-9_\-]{1,64}$/', $value) === 1 ? $value : 'unknown';
     }
 }

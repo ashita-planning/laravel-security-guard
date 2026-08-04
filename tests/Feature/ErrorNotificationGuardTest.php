@@ -93,7 +93,7 @@ class ErrorNotificationGuardTest extends TestCase
 
         // One message for a burst, not one per occurrence.
         Queue::assertPushed(SendAggregatedErrorNotification::class, 1);
-        $this->assertCount(3, $guard->drain('front_error'));
+        $this->assertCount(3, $guard->claim('front_error')->events);
     }
 
     public function test_different_types_are_aggregated_separately(): void

@@ -13,6 +13,7 @@ use Apkk\LaravelSecurityGuard\Notifications\NotifierRegistry;
 use Apkk\LaravelSecurityGuard\Notifications\SecurityMessageBuilder;
 use Apkk\LaravelSecurityGuard\Services\DailyLimiter;
 use Apkk\LaravelSecurityGuard\Services\IpBlockService;
+use Apkk\LaravelSecurityGuard\Services\NotificationDeliveryState;
 use Apkk\LaravelSecurityGuard\Services\NotificationSuspension;
 use Apkk\LaravelSecurityGuard\Support\FailureLogger;
 use Apkk\LaravelSecurityGuard\Tests\TestCase;
@@ -117,6 +118,7 @@ class SecurityEventNotificationTest extends TestCase
                 $this->app->make(NotifierRegistry::class),
                 $this->app->make(DailyLimiter::class),
                 $this->app->make(NotificationSuspension::class),
+                $this->app->make(NotificationDeliveryState::class),
                 $this->app->make(BlockedIpRepositoryContract::class),
                 $this->app->make(FailureLogger::class),
             );
@@ -206,7 +208,7 @@ class SecurityEventNotificationTest extends TestCase
 
         $body = $this->app->make(SecurityMessageBuilder::class)->forSecurityEvent($event);
 
-        $this->assertStringContainsString('203.0.113.x', $body);
+        $this->assertStringContainsString('203.0.113.0/24', $body);
         $this->assertStringNotContainsString('203.0.113.10', $body);
     }
 }

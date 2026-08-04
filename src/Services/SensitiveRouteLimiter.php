@@ -6,7 +6,7 @@ namespace Apkk\LaravelSecurityGuard\Services;
 
 use Apkk\LaravelSecurityGuard\Contracts\ClientIpResolverContract;
 use Apkk\LaravelSecurityGuard\Contracts\IdentifierResolverContract;
-use Apkk\LaravelSecurityGuard\Support\CacheKeys;
+use Apkk\LaravelSecurityGuard\Support\CacheKeyFactory;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
@@ -33,6 +33,7 @@ class SensitiveRouteLimiter
         private readonly Container $container,
         private readonly LoggerInterface $logger,
         private readonly BlockResponseFactory $responses,
+        private readonly CacheKeyFactory $cacheKeys,
     ) {}
 
     /**
@@ -51,14 +52,27 @@ class SensitiveRouteLimiter
         }
 
         $decayMinutes = max(1, (int) ($definition['decay_minutes'] ?? 1));
+        $ipAddress = $this->ipResolver->resolve($request);
+        $limits = [];
 
-        $limits = [$this->limit(
-            $profile,
-            'ip',
-            $this->ipResolver->resolve($request) ?? 'unresolved',
-            $decayMinutes,
-            max(1, (int) ($definition['ip_attempts'] ?? 1)),
-        )];
+        if ($ipAddress !== null) {
+            $limits[] = $this->limit(
+                $profile,
+                'ip',
+                $ipAddress,
+                $decayMinutes,
+                max(1, (int) ($definition['ip_attempts'] ?? 1)),
+            );
+        } else {
+            // Never bucket unidentified clients together. A shared "unresolved"
+            // key means one visitor's attempts throttle everyone whose address
+            // could not be read, turning a proxy misconfiguration into a
+            // site-wide 429. Identifier limits below still apply.
+            $this->logger->warning(
+                '[security-guard] Client IP could not be resolved; the IP limit was skipped for this request.',
+                ['profile' => $profile],
+            );
+        }
 
         foreach ((array) ($definition['identifiers'] ?? []) as $name => $identifier) {
             $value = $this->identifierValue($request, (array) $identifier);
@@ -76,7 +90,10 @@ class SensitiveRouteLimiter
             );
         }
 
-        return $limits;
+        // With no resolvable IP and no identifier present there is nothing to
+        // key on. An empty array would be read as "unlimited" by the throttle
+        // middleware, so say so explicitly.
+        return $limits === [] ? [Limit::none()] : $limits;
     }
 
     public function enabled(): bool
@@ -147,10 +164,10 @@ class SensitiveRouteLimiter
         int $decayMinutes,
         int $attempts,
     ): Limit {
-        $valueHash = CacheKeys::hash($value);
+        $valueHash = CacheKeyFactory::hash($value);
 
         return Limit::perMinutes($decayMinutes, $attempts)
-            ->by(CacheKeys::sensitive($profile, $dimension, $value))
+            ->by($this->cacheKeys->sensitive($profile, $dimension, $value))
             ->response(fn (Request $request, array $headers): Response => $this->rejected(
                 $request,
                 $headers,
@@ -201,7 +218,7 @@ class SensitiveRouteLimiter
         int $decayMinutes,
     ): void {
         try {
-            $key = CacheKeys::sensitiveLogOnce($profile, $dimension, $valueHash);
+            $key = $this->cacheKeys->sensitiveLogOnce($profile, $dimension, $valueHash);
 
             if (! $this->cache->add($key, true, $decayMinutes * 60)) {
                 return;

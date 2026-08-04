@@ -60,6 +60,12 @@ return [
     'permanent_block' => [
         'enabled' => true,
 
+        // Paths that skip block checks AND attack path detection entirely.
+        // Deliberately separate from the rate limit list below and empty by
+        // default: excusing a path here means a already-blocked address is
+        // served normally there, so add only paths you fully trust.
+        'excluded_paths' => [],
+
         // Exact-match only in v1. CIDR and subnets are not supported.
         'ignored_ips' => [],
 
@@ -195,11 +201,30 @@ return [
         'cooldown_minutes' => 10,
         'daily_limits' => ['line' => 4, 'mail' => 4],
         'on_limit' => 'mark_handled',
+        // Ceiling on retained events per aggregation window. Occurrences past
+        // this are still counted, just not stored: during a storm the buffer
+        // is what grows fastest.
+        'max_aggregated_events' => 50,
         'url_max_bytes' => 255,
         'masked_query_keys' => [
             'token', 'password', 'password_confirmation', 'secret', 'signature',
             'api_key', 'apikey', 'access_token', 'refresh_token', 'auth', 'key',
         ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Diagnostic logging
+    |--------------------------------------------------------------------------
+    |
+    | Exception messages from a failing driver can carry a DSN, credentials or
+    | the bound values of a statement. Turn this off when logs leave your
+    | infrastructure; the exception class is always recorded either way.
+    |
+    */
+
+    'logging' => [
+        'include_exception_messages' => true,
     ],
 
     /*

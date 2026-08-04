@@ -55,7 +55,39 @@ class IpTest extends TestCase
 
     public function test_it_masks_the_host_portion(): void
     {
-        $this->assertSame('203.0.113.x', Ip::mask('203.0.113.10'));
-        $this->assertSame('2001:db8:1::', Ip::mask('2001:db8:1:2::3'));
+        $this->assertSame('203.0.113.0/24', Ip::mask('203.0.113.10'));
+        $this->assertSame('2001:db8:1::/48', Ip::mask('2001:db8:1:2::3'));
+    }
+
+    #[DataProvider('maskableAddresses')]
+    public function test_a_masked_address_is_always_a_valid_network(string $input): void
+    {
+        // Text-splitting masks used to emit things like `::1::` for compressed
+        // notation. Whatever goes in, the network part must parse back.
+        [$network, $prefix] = explode('/', Ip::mask($input));
+
+        $this->assertNotFalse(filter_var($network, FILTER_VALIDATE_IP), "{$input} produced {$network}");
+        $this->assertContains($prefix, ['24', '48']);
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function maskableAddresses(): array
+    {
+        return [
+            'ipv6 loopback' => ['::1'],
+            'ipv6 unspecified' => ['::'],
+            'ipv6 compressed' => ['2001:db8::1'],
+            'ipv6 link local' => ['fe80::'],
+            'ipv6 full' => ['2001:0db8:1234:5678:9abc:def0:1234:5678'],
+            'ipv4' => ['203.0.113.10'],
+            'ipv4 private' => ['10.1.2.3'],
+        ];
+    }
+
+    public function test_an_unparseable_address_masks_to_a_constant(): void
+    {
+        $this->assertSame('unknown', Ip::mask('not-an-ip'));
     }
 }

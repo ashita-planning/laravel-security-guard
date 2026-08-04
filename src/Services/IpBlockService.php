@@ -10,10 +10,11 @@ use Apkk\LaravelSecurityGuard\Contracts\SecurityEventDispatcherContract;
 use Apkk\LaravelSecurityGuard\Data\ActorData;
 use Apkk\LaravelSecurityGuard\Data\BlockedIpRecord;
 use Apkk\LaravelSecurityGuard\Data\BlockIpData;
+use Apkk\LaravelSecurityGuard\Data\BlockOperationResult;
 use Apkk\LaravelSecurityGuard\Data\SecurityEventData;
 use Apkk\LaravelSecurityGuard\Events\IpBlocked;
 use Apkk\LaravelSecurityGuard\Events\IpReleased;
-use Apkk\LaravelSecurityGuard\Support\CacheKeys;
+use Apkk\LaravelSecurityGuard\Support\CacheKeyFactory;
 use Apkk\LaravelSecurityGuard\Support\FailureLogger;
 use Apkk\LaravelSecurityGuard\Support\Ip;
 use Illuminate\Cache\RateLimiter;
@@ -41,6 +42,7 @@ class IpBlockService
         private readonly SecurityEventDispatcherContract $securityEvents,
         private readonly IpMatcherContract $ipMatcher,
         private readonly RateLimiter $rateLimiter,
+        private readonly CacheKeyFactory $cacheKeys,
         private readonly FailureLogger $failureLogger,
     ) {}
 
@@ -75,7 +77,7 @@ class IpBlockService
 
         try {
             return (bool) $this->cache->remember(
-                CacheKeys::block($normalized),
+                $this->cacheKeys->block($normalized),
                 $this->cacheSeconds(),
                 $lookup,
             );
@@ -96,6 +98,10 @@ class IpBlockService
     /**
      * Persist a block. Returns null when the address is ignored or invalid.
      *
+     * The repository, not this method, decides whether the call newly blocked
+     * the address; a read here followed by a write would let two concurrent
+     * probes both announce the same block.
+     *
      * @throws Throwable when the record cannot be stored
      */
     public function block(
@@ -103,22 +109,14 @@ class IpBlockService
         string $reasonCode,
         ?string $matchedPattern = null,
         int $requestCount = 1,
-    ): ?BlockedIpRecord {
+    ): ?BlockOperationResult {
         $normalized = Ip::normalize($ipAddress);
 
         if ($normalized === null || $this->isIgnored($normalized)) {
             return null;
         }
 
-        $wasActive = false;
-
-        try {
-            $wasActive = $this->repository->findActive($normalized) !== null;
-        } catch (Throwable $exception) {
-            $this->failureLogger->once('Existing block lookup failed before blocking.', $exception);
-        }
-
-        $record = $this->repository->block(new BlockIpData(
+        $result = $this->repository->block(new BlockIpData(
             ipAddress: $normalized,
             reasonCode: $reasonCode,
             matchedPattern: $matchedPattern,
@@ -127,20 +125,18 @@ class IpBlockService
 
         $this->rememberBlocked($normalized);
 
-        $isNewBlock = ! $wasActive;
+        $this->events->dispatch(new IpBlocked($result->record, $result->isNewBlock));
 
-        $this->events->dispatch(new IpBlocked($record, $isNewBlock));
-
-        if ($isNewBlock) {
+        if ($result->isNewBlock) {
             // Notification failure must never undo a successful block.
             try {
-                $this->securityEvents->dispatch(SecurityEventData::ipBlocked($record));
+                $this->securityEvents->dispatch(SecurityEventData::ipBlocked($result->record));
             } catch (Throwable $exception) {
                 $this->failureLogger->once('Security event dispatch failed.', $exception);
             }
         }
 
-        return $record;
+        return $result;
     }
 
     /**
@@ -156,7 +152,7 @@ class IpBlockService
         }
 
         try {
-            $this->cache->put(CacheKeys::temporaryBlock($normalized), true, max(1, $minutes) * 60);
+            $this->cache->put($this->cacheKeys->temporaryBlock($normalized), true, max(1, $minutes) * 60);
 
             return true;
         } catch (Throwable $exception) {
@@ -213,14 +209,14 @@ class IpBlockService
     public function forgetCaches(string $normalizedIp): void
     {
         try {
-            $this->cache->forget(CacheKeys::block($normalizedIp));
-            $this->cache->forget(CacheKeys::temporaryBlock($normalizedIp));
+            $this->cache->forget($this->cacheKeys->block($normalizedIp));
+            $this->cache->forget($this->cacheKeys->temporaryBlock($normalizedIp));
         } catch (Throwable $exception) {
             $this->failureLogger->once('Block cache clear failed.', $exception);
         }
 
         try {
-            $this->rateLimiter->clear(CacheKeys::publicRequests($normalizedIp));
+            $this->rateLimiter->clear($this->cacheKeys->publicRequests($normalizedIp));
         } catch (Throwable $exception) {
             $this->failureLogger->once('Public request counter clear failed.', $exception);
         }
@@ -229,7 +225,7 @@ class IpBlockService
     private function hasTemporaryBlock(string $normalizedIp): bool
     {
         try {
-            return (bool) $this->cache->get(CacheKeys::temporaryBlock($normalizedIp), false);
+            return (bool) $this->cache->get($this->cacheKeys->temporaryBlock($normalizedIp), false);
         } catch (Throwable $exception) {
             $this->failureLogger->once('Temporary block read failed.', $exception);
 
@@ -240,7 +236,7 @@ class IpBlockService
     private function rememberBlocked(string $normalizedIp): void
     {
         try {
-            $this->cache->put(CacheKeys::block($normalizedIp), true, $this->cacheSeconds());
+            $this->cache->put($this->cacheKeys->block($normalizedIp), true, $this->cacheSeconds());
         } catch (Throwable $exception) {
             $this->failureLogger->once('Block cache write failed.', $exception);
         }

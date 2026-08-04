@@ -7,6 +7,7 @@ namespace Apkk\LaravelSecurityGuard\Contracts;
 use Apkk\LaravelSecurityGuard\Data\ActorData;
 use Apkk\LaravelSecurityGuard\Data\BlockedIpRecord;
 use Apkk\LaravelSecurityGuard\Data\BlockIpData;
+use Apkk\LaravelSecurityGuard\Data\BlockOperationResult;
 
 interface BlockedIpRepositoryContract
 {
@@ -19,9 +20,11 @@ interface BlockedIpRepositoryContract
     /**
      * Create or re-activate the block row for an address.
      *
-     * Concurrent calls for the same address must resolve to a single row.
+     * Concurrent calls for the same address must resolve to a single row, and
+     * exactly one of them may report `isNewBlock`. Implementations must decide
+     * that flag atomically rather than by reading the row first.
      */
-    public function block(BlockIpData $data): BlockedIpRecord;
+    public function block(BlockIpData $data): BlockOperationResult;
 
     public function release(string $ipAddress, ?ActorData $actor = null): bool;
 

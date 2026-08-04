@@ -6,12 +6,15 @@ namespace Apkk\LaravelSecurityGuard\Services;
 
 use Apkk\LaravelSecurityGuard\Contracts\ErrorNotificationOutcome;
 use Apkk\LaravelSecurityGuard\Contracts\ErrorNotificationOutcomeHandlerContract;
+use Apkk\LaravelSecurityGuard\Data\ErrorEventBatch;
 use Apkk\LaravelSecurityGuard\Data\ErrorEventData;
 use Apkk\LaravelSecurityGuard\Jobs\SendAggregatedErrorNotification;
-use Apkk\LaravelSecurityGuard\Support\CacheKeys;
+use Apkk\LaravelSecurityGuard\Support\CacheKeyFactory;
 use Apkk\LaravelSecurityGuard\Support\FailureLogger;
 use Apkk\LaravelSecurityGuard\Support\UrlSanitizer;
 use Illuminate\Contracts\Bus\Dispatcher as BusDispatcher;
+use Illuminate\Contracts\Cache\LockProvider;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Throwable;
@@ -29,10 +32,14 @@ class ErrorNotificationGuard
 
     public const DISABLED = 'disabled';
 
+    /** Must outlive the delivery job's full retry and backoff window. */
+    private const INFLIGHT_TTL_SECONDS = 86400;
+
     public function __construct(
         private readonly CacheRepository $cache,
         private readonly ConfigRepository $config,
         private readonly BusDispatcher $bus,
+        private readonly CacheKeyFactory $cacheKeys,
         private readonly FailureLogger $failureLogger,
         private readonly ?ErrorNotificationOutcomeHandlerContract $outcomeHandler = null,
     ) {}
@@ -76,27 +83,74 @@ class ErrorNotificationGuard
     }
 
     /**
-     * Take everything buffered for a type. Returns an empty array when another
-     * worker already drained the window.
+     * Take ownership of a window for delivery.
      *
-     * @return array<int, ErrorEventData>
+     * The buffer is moved into an in-flight slot rather than simply read and
+     * deleted. A queue retry rebuilds the job from its original payload, so a
+     * batch held on the job instance would not survive one failed attempt;
+     * keeping it here means a retry picks up exactly where it left off, and
+     * any occurrences reported meanwhile are folded in.
+     *
+     * Call `releaseClaim()` once the batch has been dealt with.
      */
-    public function drain(string $notificationType): array
+    public function claim(string $notificationType): ErrorEventBatch
     {
-        $key = CacheKeys::errorAggregation($notificationType);
+        $inflightKey = $this->cacheKeys->errorInflight($notificationType);
+        $bufferKey = $this->cacheKeys->errorAggregation($notificationType);
 
         try {
-            $payloads = (array) $this->cache->pull($key, []);
-        } catch (Throwable $exception) {
-            $this->failureLogger->once('Error notification buffer could not be read.', $exception);
+            $claim = function () use ($inflightKey, $bufferKey): array {
+                $inflight = $this->normalizeBuffer($this->cache->get($inflightKey));
+                // pull() is read-and-delete in one step, so two workers racing
+                // here cannot both take the same occurrences.
+                $pending = $this->normalizeBuffer($this->cache->pull($bufferKey));
 
-            return [];
+                $merged = [
+                    'events' => array_slice(
+                        array_merge($inflight['events'], $pending['events']),
+                        0,
+                        $this->maxAggregatedEvents(),
+                    ),
+                    'total' => $inflight['total'] + $pending['total'],
+                ];
+
+                if ($merged['total'] > 0) {
+                    $this->cache->put($inflightKey, $merged, self::INFLIGHT_TTL_SECONDS);
+                }
+
+                return $merged;
+            };
+
+            $store = $this->cache->getStore();
+
+            $buffer = $store instanceof LockProvider
+                ? (array) $this->cache->lock($inflightKey.':lock', 5)->block(3, $claim)
+                : $claim();
+        } catch (Throwable $exception) {
+            $this->failureLogger->once('Error notification buffer could not be claimed.', $exception);
+
+            return ErrorEventBatch::empty();
         }
 
-        return array_values(array_map(
-            static fn (array $payload): ErrorEventData => ErrorEventData::fromArray($payload),
-            array_filter($payloads, 'is_array'),
-        ));
+        return new ErrorEventBatch(
+            array_map(
+                static fn (array $payload): ErrorEventData => ErrorEventData::fromArray($payload),
+                $buffer['events'],
+            ),
+            $buffer['total'],
+        );
+    }
+
+    /**
+     * Drop an in-flight window once it has been delivered or abandoned.
+     */
+    public function releaseClaim(string $notificationType): void
+    {
+        try {
+            $this->cache->forget($this->cacheKeys->errorInflight($notificationType));
+        } catch (Throwable $exception) {
+            $this->failureLogger->once('Error notification claim could not be released.', $exception);
+        }
     }
 
     public function startCooldown(string $notificationType): void
@@ -108,7 +162,7 @@ class ErrorNotificationGuard
         }
 
         try {
-            $this->cache->put(CacheKeys::errorCooldown($notificationType), true, $minutes * 60);
+            $this->cache->put($this->cacheKeys->errorCooldown($notificationType), true, $minutes * 60);
         } catch (Throwable $exception) {
             $this->failureLogger->once('Error notification cooldown could not be stored.', $exception);
         }
@@ -117,7 +171,7 @@ class ErrorNotificationGuard
     public function inCooldown(string $notificationType): bool
     {
         try {
-            return (bool) $this->cache->get(CacheKeys::errorCooldown($notificationType), false);
+            return (bool) $this->cache->get($this->cacheKeys->errorCooldown($notificationType), false);
         } catch (Throwable) {
             return false;
         }
@@ -176,19 +230,77 @@ class ErrorNotificationGuard
     }
 
     /**
+     * Append an event to its aggregation window.
+     *
+     * Two properties matter here, and the naive read-append-write had neither:
+     *
+     *  - Atomicity. Concurrent reporters read the same buffer and the last
+     *    write wins, silently dropping the others' events. The mutation runs
+     *    under a lock wherever the store provides one.
+     *  - A ceiling. The buffer is what an error storm inflates fastest; without
+     *    a cap, a loop tripping one exception fills the cache entry until the
+     *    payload itself becomes the outage. Past the cap only the counter moves.
+     *
      * @return bool true when this event opened a new aggregation window
      */
     private function buffer(ErrorEventData $event): bool
     {
-        $key = CacheKeys::errorAggregation($event->notificationType);
+        $key = $this->cacheKeys->errorAggregation($event->notificationType);
         $ttl = $this->aggregationDelay() + 300;
+        $maxEvents = $this->maxAggregatedEvents();
 
-        $existing = (array) $this->cache->get($key, []);
-        $existing[] = $event->toArray();
+        $mutate = function () use ($key, $ttl, $maxEvents, $event): bool {
+            $buffer = $this->normalizeBuffer($this->cache->get($key));
+            $wasEmpty = $buffer['total'] === 0;
 
-        $this->cache->put($key, $existing, $ttl);
+            $buffer['total']++;
 
-        return count($existing) === 1;
+            if (count($buffer['events']) < $maxEvents) {
+                $buffer['events'][] = $event->toArray();
+            }
+
+            $this->cache->put($key, $buffer, $ttl);
+
+            return $wasEmpty;
+        };
+
+        $store = $this->cache->getStore();
+
+        if (! $store instanceof LockProvider) {
+            return $mutate();
+        }
+
+        try {
+            return (bool) $this->cache->lock($key.':lock', 5)->block(3, $mutate);
+        } catch (LockTimeoutException $exception) {
+            // Losing the race only costs this one occurrence; the window that
+            // already exists will still be delivered.
+            $this->failureLogger->once('Error notification buffer lock timed out.', $exception);
+
+            return false;
+        }
+    }
+
+    /**
+     * @return array{events: array<int, array<string, string>>, total: int}
+     */
+    private function normalizeBuffer(mixed $raw): array
+    {
+        if (! is_array($raw)) {
+            return ['events' => [], 'total' => 0];
+        }
+
+        $events = array_values(array_filter((array) ($raw['events'] ?? []), 'is_array'));
+
+        return [
+            'events' => $events,
+            'total' => max((int) ($raw['total'] ?? 0), count($events)),
+        ];
+    }
+
+    private function maxAggregatedEvents(): int
+    {
+        return max(1, (int) $this->config->get('security-guard.error_notifications.max_aggregated_events', 50));
     }
 
     private function scheduleDelivery(string $notificationType): void

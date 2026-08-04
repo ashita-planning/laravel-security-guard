@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace Apkk\LaravelSecurityGuard\Jobs;
 
 use Apkk\LaravelSecurityGuard\Contracts\ErrorNotificationOutcome;
+use Apkk\LaravelSecurityGuard\Data\ErrorEventBatch;
+use Apkk\LaravelSecurityGuard\Exceptions\NotificationDeliveryFailed;
 use Apkk\LaravelSecurityGuard\Notifications\NotifierRegistry;
 use Apkk\LaravelSecurityGuard\Services\DailyLimiter;
 use Apkk\LaravelSecurityGuard\Services\ErrorNotificationGuard;
+use Apkk\LaravelSecurityGuard\Services\NotificationDeliveryState;
 use Apkk\LaravelSecurityGuard\Services\NotificationSuspension;
 use Apkk\LaravelSecurityGuard\Support\FailureLogger;
 use Illuminate\Bus\Queueable;
@@ -16,17 +19,24 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Throwable;
 
 /**
  * Sends one aggregated message per notification type per window.
  *
- * Channels are limited independently, so exhausting the LINE allowance does
- * not silence mail. Whatever the result, the host is told through the outcome
+ * Channels are limited independently, so exhausting the LINE allowance does not
+ * silence mail. Whatever the result, the host is told through the outcome
  * handler so its report rows never sit in limbo.
+ *
+ * The window is claimed in the cache rather than held on the job instance. A
+ * retry rebuilds the job from its original payload, so an instance property
+ * would be empty on the second attempt and the batch would vanish.
  */
 class SendAggregatedErrorNotification implements ShouldBeUnique, ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    private const SCOPE = 'error-events';
 
     public int $tries = 3;
 
@@ -39,29 +49,44 @@ class SendAggregatedErrorNotification implements ShouldBeUnique, ShouldQueue
         return $this->notificationType;
     }
 
+    /**
+     * @return array<int, int>
+     */
+    public function backoff(): array
+    {
+        return [60, 300];
+    }
+
     public function handle(
         ErrorNotificationGuard $guard,
         NotifierRegistry $registry,
         DailyLimiter $dailyLimiter,
         NotificationSuspension $suspension,
+        NotificationDeliveryState $deliveryState,
         FailureLogger $failureLogger,
     ): void {
         if (! $guard->enabled()) {
             return;
         }
 
-        $events = $guard->drain($this->notificationType);
+        // Held in the cache, not on this instance: a retry re-creates the job
+        // from its original payload and would otherwise find nothing to send.
+        $batch = $guard->claim($this->notificationType);
 
-        if ($events === []) {
+        if ($batch->isEmpty()) {
             return;
         }
 
+        $state = $deliveryState->get(self::SCOPE, $this->notificationType);
+
         $limits = $guard->dailyLimits();
-        $anySent = false;
-        $anyLimited = false;
+        $delivered = [];
+        $failed = [];
+        $limited = false;
 
         foreach ($limits as $channel => $limit) {
-            if ($suspension->isSuspended('error-events', $channel)) {
+            if (in_array($channel, $state['delivered'], true)
+                || $suspension->isSuspended(self::SCOPE, $channel)) {
                 continue;
             }
 
@@ -71,8 +96,8 @@ class SendAggregatedErrorNotification implements ShouldBeUnique, ShouldQueue
                 continue;
             }
 
-            if (! $dailyLimiter->consume('error-events:'.$channel, $limit)) {
-                $anyLimited = true;
+            if (! $dailyLimiter->consume(self::SCOPE.':'.$channel, $limit)) {
+                $limited = true;
                 $failureLogger->always('Error notification skipped: daily channel limit reached.', null, [
                     'channel' => $channel,
                     'notification_type' => $this->notificationType,
@@ -81,10 +106,11 @@ class SendAggregatedErrorNotification implements ShouldBeUnique, ShouldQueue
                 continue;
             }
 
-            $result = $notifier->notify($events);
+            $result = $notifier->notify($batch->events);
 
             if ($result->sent) {
-                $anySent = true;
+                $delivered[] = $channel;
+                $deliveryState->markDelivered(self::SCOPE, $this->notificationType, $channel);
 
                 continue;
             }
@@ -93,18 +119,56 @@ class SendAggregatedErrorNotification implements ShouldBeUnique, ShouldQueue
                 'channel' => $channel,
                 'reason' => $result->reason ?? 'unknown',
             ]);
+
+            if ($result->isRetryable()) {
+                $failed[] = $channel;
+            }
         }
 
+        if ($failed !== []) {
+            // Keep the claim so the retry still has the batch; the outcome is
+            // only reported once the attempt sequence is settled.
+            throw NotificationDeliveryFailed::forChannels($failed);
+        }
+
+        $guard->releaseClaim($this->notificationType);
+        $deliveryState->forget(self::SCOPE, $this->notificationType);
+        $this->reportOutcome($guard, $batch, $delivered !== [] || $state['delivered'] !== [], $limited);
+    }
+
+    /**
+     * Every attempt has now failed. Hand the batch back to the host so its
+     * report rows are not left waiting on a notification that will never come.
+     */
+    public function failed(?Throwable $exception): void
+    {
+        $guard = app(ErrorNotificationGuard::class);
+        $batch = $guard->claim($this->notificationType);
+
+        $guard->releaseClaim($this->notificationType);
+        app(NotificationDeliveryState::class)->forget(self::SCOPE, $this->notificationType);
+
+        if (! $batch->isEmpty()) {
+            $guard->handleOutcome($batch->events, ErrorNotificationOutcome::FAILED);
+        }
+    }
+
+    private function reportOutcome(
+        ErrorNotificationGuard $guard,
+        ErrorEventBatch $batch,
+        bool $anySent,
+        bool $limited,
+    ): void {
         if ($anySent) {
             $guard->startCooldown($this->notificationType);
-            $guard->handleOutcome($events, ErrorNotificationOutcome::SENT);
+            $guard->handleOutcome($batch->events, ErrorNotificationOutcome::SENT);
 
             return;
         }
 
         $guard->handleOutcome(
-            $events,
-            $anyLimited ? $guard->onLimitOutcome() : ErrorNotificationOutcome::FAILED,
+            $batch->events,
+            $limited ? $guard->onLimitOutcome() : ErrorNotificationOutcome::FAILED,
         );
     }
 }

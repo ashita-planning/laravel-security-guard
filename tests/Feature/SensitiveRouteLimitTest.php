@@ -48,6 +48,32 @@ class SensitiveRouteLimitTest extends TestCase
             ->assertHeader('Retry-After');
     }
 
+    public function test_clients_with_an_unresolvable_address_do_not_share_one_budget(): void
+    {
+        // A shared "unresolved" bucket turns a proxy misconfiguration into a
+        // site-wide 429: the first few visitors spend the budget and everyone
+        // else is locked out of login entirely.
+        for ($i = 0; $i < 8; $i++) {
+            $this->withServerVariables(['REMOTE_ADDR' => 'unknown'])
+                ->post('/contact/confirm')
+                ->assertOk();
+        }
+    }
+
+    public function test_identifier_limits_still_apply_when_the_address_is_unknown(): void
+    {
+        // Dropping the IP axis must not leave the route unprotected: the
+        // e-mail axis is what stops credential stuffing here.
+        $this->withServerVariables(['REMOTE_ADDR' => 'unknown'])
+            ->post('/login', ['email' => 'victim@example.test'])->assertOk();
+        $this->withServerVariables(['REMOTE_ADDR' => 'unknown'])
+            ->post('/login', ['email' => 'victim@example.test'])->assertOk();
+
+        $this->withServerVariables(['REMOTE_ADDR' => 'unknown'])
+            ->post('/login', ['email' => 'victim@example.test'])
+            ->assertStatus(429);
+    }
+
     public function test_a_different_address_has_its_own_budget(): void
     {
         $this->fromIp('203.0.113.10')->post('/contact/confirm')->assertOk();

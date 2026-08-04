@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Apkk\LaravelSecurityGuard\Services;
 
-use Apkk\LaravelSecurityGuard\Support\CacheKeys;
+use Apkk\LaravelSecurityGuard\Support\CacheKeyFactory;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Http\Request;
@@ -21,6 +21,7 @@ class SubmissionTokenService
 {
     public function __construct(
         private readonly CacheRepository $cache,
+        private readonly CacheKeyFactory $cacheKeys,
         private readonly ConfigRepository $config,
     ) {}
 
@@ -53,7 +54,7 @@ class SubmissionTokenService
         // add() is atomic on a shared store: the first of two concurrent
         // submissions wins and the second is rejected.
         return $this->cache->add(
-            CacheKeys::usedSubmissionToken($submittedToken),
+            $this->cacheKeys->usedSubmissionToken($submittedToken),
             true,
             $this->usedTokenTtl(),
         );

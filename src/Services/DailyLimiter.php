@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Apkk\LaravelSecurityGuard\Services;
 
-use Apkk\LaravelSecurityGuard\Support\CacheKeys;
+use Apkk\LaravelSecurityGuard\Support\CacheKeyFactory;
 use Apkk\LaravelSecurityGuard\Support\FailureLogger;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
@@ -22,6 +22,7 @@ class DailyLimiter
 {
     public function __construct(
         private readonly CacheRepository $cache,
+        private readonly CacheKeyFactory $cacheKeys,
         private readonly FailureLogger $failureLogger,
     ) {}
 
@@ -31,7 +32,7 @@ class DailyLimiter
             return false;
         }
 
-        $key = CacheKeys::dailyCounter($scope, Carbon::now()->format('Ymd'));
+        $key = $this->cacheKeys->dailyCounter($scope, Carbon::now()->format('Ymd'));
         $store = $this->cache->getStore();
 
         if (! $store instanceof LockProvider) {
@@ -54,7 +55,7 @@ class DailyLimiter
     public function used(string $scope): int
     {
         try {
-            return (int) $this->cache->get(CacheKeys::dailyCounter($scope, Carbon::now()->format('Ymd')), 0);
+            return (int) $this->cache->get($this->cacheKeys->dailyCounter($scope, Carbon::now()->format('Ymd')), 0);
         } catch (Throwable) {
             return 0;
         }

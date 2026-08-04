@@ -110,3 +110,24 @@ jobs:
 
       - name: Check formatting
         run: vendor/bin/pint --test
+
+  audit:
+    runs-on: ubuntu-latest
+    name: Security audit
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction --no-progress
+
+      # A security package shipping a dependency with a known advisory would be
+      # its own worst advertisement.
+      - name: Audit dependencies
+        run: composer audit --no-interaction

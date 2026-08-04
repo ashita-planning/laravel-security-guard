@@ -43,17 +43,21 @@ class SecurityMessageBuilder
 
     /**
      * @param  array<int, ErrorEventData>  $events
+     * @param  int|null  $totalOccurrences  Real count when the batch was capped
      */
-    public function forErrorEvents(array $events): string
+    public function forErrorEvents(array $events, ?int $totalOccurrences = null): string
     {
         $first = $events[0] ?? null;
+        $total = $totalOccurrences ?? count($events);
 
         $lines = [
             '[security-guard] Application error notification',
             'Type: '.($first?->notificationType ?? 'unknown'),
             'Environment: '.($first?->environment ?? 'unknown'),
             'Area: '.($first?->area ?? 'unknown'),
-            'Occurrences: '.count($events),
+            // The retained sample is capped; the count never is, so an
+            // incident is not under-reported just because the buffer filled.
+            'Occurrences: '.$total.($total > count($events) ? ' (showing '.count($events).')' : ''),
         ];
 
         if ($first?->exceptionClass !== null) {
