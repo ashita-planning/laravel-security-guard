@@ -1,0 +1,112 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # One job per supported Laravel major on the PHP versions that major
+  # actually supports. A Composer constraint is not a claim of support;
+  # only a green cell here is.
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { php: '8.1', laravel: '10.*', testbench: '8.*', dependencies: 'highest' }
+          - { php: '8.1', laravel: '10.*', testbench: '8.*', dependencies: 'lowest' }
+          - { php: '8.2', laravel: '10.*', testbench: '8.*', dependencies: 'highest' }
+          - { php: '8.2', laravel: '11.*', testbench: '9.*', dependencies: 'highest' }
+          - { php: '8.3', laravel: '11.*', testbench: '9.*', dependencies: 'highest' }
+          - { php: '8.2', laravel: '12.*', testbench: '10.*', dependencies: 'highest' }
+          - { php: '8.3', laravel: '12.*', testbench: '10.*', dependencies: 'highest' }
+          - { php: '8.4', laravel: '12.*', testbench: '10.*', dependencies: 'highest' }
+          - { php: '8.3', laravel: '13.*', testbench: '11.*', dependencies: 'highest' }
+          - { php: '8.4', laravel: '13.*', testbench: '11.*', dependencies: 'highest' }
+
+    name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }} / ${{ matrix.dependencies }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: dom, curl, libxml, mbstring, zip, pdo, pdo_sqlite, sqlite3
+          coverage: none
+
+      - name: Install dependencies
+        run: |
+          composer require --no-update --no-interaction --dev \
+            "laravel/framework:${{ matrix.laravel }}" \
+            "orchestra/testbench:${{ matrix.testbench }}"
+          composer update --prefer-dist --no-interaction --no-progress \
+            ${{ matrix.dependencies == 'lowest' && '--prefer-lowest' || '' }}
+
+      - name: Run tests
+        run: vendor/bin/phpunit
+
+  # SQLite covers the matrix above; MySQL is verified once so that the
+  # migrations and repository queries are exercised on a real server.
+  mysql:
+    runs-on: ubuntu-latest
+    name: MySQL
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: security_guard_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: dom, curl, libxml, mbstring, zip, pdo, pdo_mysql
+          coverage: none
+
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Run tests
+        env:
+          SECURITY_GUARD_TEST_DB: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: security_guard_test
+          DB_USERNAME: root
+          DB_PASSWORD: password
+        run: vendor/bin/phpunit
+
+  lint:
+    runs-on: ubuntu-latest
+    name: Pint
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Check formatting
+        run: vendor/bin/pint --test

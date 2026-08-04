@@ -1,0 +1,63 @@
+{
+    "name": "apkk/laravel-security-guard",
+    "description": "Reusable intrusion defence package for Laravel: known attack path detection, permanent IP blocking, public rate limiting, admin IP allowlists, one-time submission tokens and hardened security notifications.",
+    "keywords": [
+        "laravel",
+        "security",
+        "rate-limit",
+        "ip-block",
+        "intrusion-detection"
+    ],
+    "homepage": "https://github.com/ashita-planning/laravel-security-guard",
+    "license": "MIT",
+    "type": "library",
+    "authors": [
+        {
+            "name": "Ashita Planning",
+            "homepage": "https://github.com/ashita-planning"
+        }
+    ],
+    "require": {
+        "php": "^8.1",
+        "illuminate/bus": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "illuminate/cache": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "illuminate/console": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "illuminate/contracts": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "illuminate/database": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "illuminate/http": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "illuminate/queue": "^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "illuminate/support": "^10.0 || ^11.0 || ^12.0 || ^13.0"
+    },
+    "require-dev": {
+        "laravel/pint": "^1.13",
+        "orchestra/testbench": "^8.14 || ^9.0 || ^10.0",
+        "phpunit/phpunit": "^10.5 || ^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Apkk\\LaravelSecurityGuard\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Apkk\\LaravelSecurityGuard\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "lint": "vendor/bin/pint --test",
+        "format": "vendor/bin/pint",
+        "test": "vendor/bin/phpunit"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Apkk\\LaravelSecurityGuard\\SecurityGuardServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
