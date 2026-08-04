@@ -18,6 +18,10 @@ class BrokenCacheStore implements Store
         throw new RuntimeException('Cache unavailable.');
     }
 
+    /**
+     * @param  array<int, string>  $keys
+     * @return array<string, mixed>
+     */
     public function many(array $keys): array
     {
         throw new RuntimeException('Cache unavailable.');
@@ -28,6 +32,9 @@ class BrokenCacheStore implements Store
         throw new RuntimeException('Cache unavailable.');
     }
 
+    /**
+     * @param  array<string, mixed>  $values
+     */
     public function putMany(array $values, $seconds): bool
     {
         throw new RuntimeException('Cache unavailable.');

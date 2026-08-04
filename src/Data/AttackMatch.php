@@ -23,6 +23,9 @@ final class AttackMatch
         public readonly string $type,
     ) {}
 
+    /**
+     * @return array{category: string, type: string}
+     */
     public function toArray(): array
     {
         return [

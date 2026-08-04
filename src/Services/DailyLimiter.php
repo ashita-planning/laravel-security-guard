@@ -44,7 +44,7 @@ class DailyLimiter
         }
 
         try {
-            return $this->cache->lock($key.':lock', 5)->block(3, fn (): bool => $this->increment($key, $limit));
+            return (bool) $store->lock($key.':lock', 5)->block(3, fn (): bool => $this->increment($key, $limit));
         } catch (Throwable $exception) {
             $this->failureLogger->once('Daily notification limit lock failed; skipping the notification.', $exception);
 

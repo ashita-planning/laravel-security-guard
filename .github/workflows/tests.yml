@@ -96,6 +96,68 @@ jobs:
           DB_PASSWORD: password
         run: vendor/bin/phpunit
 
+  # MariaDB is not MySQL. It diverges on DDL, on how index length limits are
+  # applied and on affected-row reporting, and the atomic block path depends on
+  # that last one, so it is verified separately rather than assumed compatible.
+  mariadb:
+    runs-on: ubuntu-latest
+    name: MariaDB
+
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: password
+          MARIADB_DATABASE: security_guard_test
+        ports: ['3307:3306']
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: dom, curl, libxml, mbstring, zip, pdo, pdo_mysql
+          coverage: none
+
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Run tests
+        env:
+          SECURITY_GUARD_TEST_DB: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3307
+          DB_DATABASE: security_guard_test
+          DB_USERNAME: root
+          DB_PASSWORD: password
+        run: vendor/bin/phpunit
+
+  static-analysis:
+    runs-on: ubuntu-latest
+    name: PHPStan
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Analyse
+        run: vendor/bin/phpstan analyse --no-progress --memory-limit=512M
+
   lint:
     runs-on: ubuntu-latest
     name: Pint
@@ -127,6 +189,12 @@ jobs:
         with:
           php-version: '8.3'
           coverage: none
+
+      # Runs before install, on the committed manifest, so a malformed or
+      # non-normalised composer.json is caught rather than papered over by a
+      # successful resolve.
+      - name: Validate composer.json
+        run: composer validate --strict --no-check-lock
 
       - name: Install dependencies
         run: composer update --prefer-dist --no-interaction --no-progress

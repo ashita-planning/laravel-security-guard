@@ -1,0 +1,19 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 6
+
+    paths:
+        - src
+        - tests
+
+    treatPhpDocTypesAsCertain: false
+
+    ignoreErrors:
+        # The view name is resolved from the package namespace at runtime and
+        # can be overridden by a host publishing its own copy, so it cannot be
+        # a literal view-string here.
+        -
+            identifier: argument.type
+            path: src/Http/Controllers/BlockedIpController.php

@@ -52,9 +52,9 @@ class SecurityMessageBuilder
 
         $lines = [
             '[security-guard] Application error notification',
-            'Type: '.($first?->notificationType ?? 'unknown'),
-            'Environment: '.($first?->environment ?? 'unknown'),
-            'Area: '.($first?->area ?? 'unknown'),
+            'Type: '.($first->notificationType ?? 'unknown'),
+            'Environment: '.($first->environment ?? 'unknown'),
+            'Area: '.($first->area ?? 'unknown'),
             // The retained sample is capped; the count never is, so an
             // incident is not under-reported just because the buffer filled.
             'Occurrences: '.$total.($total > count($events) ? ' (showing '.count($events).')' : ''),

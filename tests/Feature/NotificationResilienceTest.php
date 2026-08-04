@@ -53,6 +53,9 @@ class NotificationResilienceTest extends TestCase
     /**
      * Register a mail notifier whose outcome the test controls.
      */
+    /**
+     * @param-out int $calls
+     */
     private function fakeMailChannel(NotificationResult $result, ?int &$calls = null): void
     {
         $calls = 0;
@@ -95,9 +98,11 @@ class NotificationResilienceTest extends TestCase
         // No recipients configured: retrying cannot fix that.
         $this->fakeMailChannel(NotificationResult::skipped('mail', 'no_recipients'));
 
+        $this->fakeMailChannel(NotificationResult::skipped('mail', 'no_recipients'), $calls);
         $this->app->call([new SendAggregatedErrorNotification('front_error'), 'handle']);
 
-        $this->assertTrue(true, 'A skipped channel must not raise.');
+        // Attempted once and not retried: the queue is never signalled.
+        $this->assertSame(1, $calls);
     }
 
     public function test_the_batch_survives_a_failed_attempt(): void

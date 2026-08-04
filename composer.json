@@ -30,6 +30,8 @@
         "illuminate/support": "^12.61.1 || ^13.12.0"
     },
     "require-dev": {
+        "composer/semver": "^3.4",
+        "larastan/larastan": "^3.0",
         "laravel/pint": "^1.13",
         "orchestra/testbench": "^10.0 || ^11.0",
         "phpunit/phpunit": "^11.0 || ^12.0"
@@ -47,7 +49,13 @@
     "scripts": {
         "lint": "vendor/bin/pint --test",
         "format": "vendor/bin/pint",
-        "test": "vendor/bin/phpunit"
+        "analyse": "vendor/bin/phpstan analyse --no-progress --memory-limit=512M",
+        "test": "vendor/bin/phpunit",
+        "check": [
+            "@lint",
+            "@analyse",
+            "@test"
+        ]
     },
     "extra": {
         "laravel": {

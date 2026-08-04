@@ -59,7 +59,7 @@ class PublicRateLimiter
                 $normalizedIp,
                 BlockReason::RATE_LIMIT,
                 requestCount: $attempts,
-            )?->isNewBlock ?? false;
+            )->isNewBlock ?? false;
         } elseif ($action === self::ACTION_TEMPORARY_BLOCK) {
             $blockedNow = $this->blockService->blockTemporarily($normalizedIp, $this->temporaryMinutes());
         }

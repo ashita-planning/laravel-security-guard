@@ -423,7 +423,23 @@ php artisan security-guard:admin-ip:revoke 1234 203.0.113.10 --type=admin
 - CAPTCHA、Turnstile、MFA
 - 攻撃元IPの地理情報取得や外部レピュテーション判定
 
-v1のIP照合は完全一致のみです。CIDR、IPv6 subnet、trusted internal networkは含みません。将来の追加は`IpMatcherContract`の実装差し替えで行えます。
+## 既知の制約
+
+### IP照合は完全一致のみ
+
+`permanent_block.ignored_ips` と管理領域の許可IPは、**完全一致のみ対応しています。CIDR形式は未対応です。**
+
+```php
+// 動作します
+'ignored_ips' => ['203.0.113.10', '2001:db8::1'],
+
+// 動作しません。文字列として一致しないため、どのIPにも一致しません
+'ignored_ips' => ['203.0.113.0/24'],
+```
+
+CIDR表記を書いてもエラーにはならず、単に**どのアドレスにも一致しません**。監視元IPを`/24`で登録したつもりが実際には除外されていない、という取り違えが起きうるため、個別のアドレスを列挙してください。
+
+IPv6 subnetとtrusted internal networkも同様に未対応です。CIDR対応は`v0.2.0`を予定しており、照合ロジックは`IpMatcherContract`の背後に閉じているため、破壊的変更なしに追加できます（[#11](https://github.com/ashita-planning/laravel-security-guard/issues/11)）。
 
 ## サポートポリシー
 

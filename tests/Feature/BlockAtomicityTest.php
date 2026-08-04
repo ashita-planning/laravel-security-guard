@@ -59,11 +59,16 @@ class BlockAtomicityTest extends TestCase
     {
         $service = $this->app->make(IpBlockService::class);
 
-        $this->assertTrue($service->block('203.0.113.20', BlockReason::RATE_LIMIT)?->isNewBlock);
+        $first = $service->block('203.0.113.20', BlockReason::RATE_LIMIT);
+        $this->assertNotNull($first);
+        $this->assertTrue($first->isNewBlock);
+
         $service->release('203.0.113.20');
 
         // A fresh incident after a release deserves a fresh notification.
-        $this->assertTrue($service->block('203.0.113.20', BlockReason::RATE_LIMIT)?->isNewBlock);
+        $second = $service->block('203.0.113.20', BlockReason::RATE_LIMIT);
+        $this->assertNotNull($second);
+        $this->assertTrue($second->isNewBlock);
         $this->assertSame(1, BlockedIp::query()->count());
     }
 

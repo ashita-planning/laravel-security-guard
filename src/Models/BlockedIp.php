@@ -7,6 +7,7 @@ namespace Apkk\LaravelSecurityGuard\Models;
 use Apkk\LaravelSecurityGuard\Data\BlockReason;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 
 /**
  * @property int $id
@@ -14,6 +15,12 @@ use Illuminate\Database\Eloquent\Model;
  * @property string $reason_code
  * @property string|null $matched_pattern
  * @property int $request_count
+ * @property Carbon|null $blocked_at
+ * @property Carbon|null $last_attempted_at
+ * @property Carbon|null $notified_at
+ * @property Carbon|null $released_at
+ * @property string|null $released_by_type
+ * @property string|null $released_by_id
  */
 class BlockedIp extends Model
 {
@@ -37,6 +44,10 @@ class BlockedIp extends Model
         return config('security-guard.database.connection') ?: parent::getConnectionName();
     }
 
+    /**
+     * @param  Builder<BlockedIp>  $query
+     * @return Builder<BlockedIp>
+     */
     public function scopeActive(Builder $query): Builder
     {
         return $query->whereNull('released_at');

@@ -6,9 +6,11 @@ namespace Apkk\LaravelSecurityGuard\Tests;
 
 use Apkk\LaravelSecurityGuard\SecurityGuardServiceProvider;
 use Illuminate\Contracts\Config\Repository;
+use Illuminate\Mail\Transport\ArrayTransport;
 use Orchestra\Testbench\Concerns\WithLaravelMigrations;
 use Orchestra\Testbench\TestCase as BaseTestCase;
 use Symfony\Component\Mailer\SentMessage;
+use Symfony\Component\Mime\Email;
 
 abstract class TestCase extends BaseTestCase
 {
@@ -83,7 +85,14 @@ abstract class TestCase extends BaseTestCase
      */
     protected function sentMails(): array
     {
-        return $this->app->make('mailer')->getSymfonyTransport()->messages()->all();
+        $transport = $this->app->make('mailer')->getSymfonyTransport();
+
+        // Narrowed rather than assumed: reading the sent messages only works on
+        // the array transport, and a misconfigured mail driver should say so
+        // here instead of failing an unrelated assertion later.
+        $this->assertInstanceOf(ArrayTransport::class, $transport);
+
+        return $transport->messages()->all();
     }
 
     /**
@@ -92,7 +101,11 @@ abstract class TestCase extends BaseTestCase
     protected function sentMailBodies(): array
     {
         return array_map(
-            static fn ($sent): string => $sent->getOriginalMessage()->getTextBody() ?? '',
+            static function (SentMessage $sent): string {
+                $message = $sent->getOriginalMessage();
+
+                return $message instanceof Email ? ($message->getTextBody() ?? '') : '';
+            },
             $this->sentMails(),
         );
     }

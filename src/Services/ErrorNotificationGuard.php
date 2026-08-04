@@ -124,7 +124,7 @@ class ErrorNotificationGuard
             $store = $this->cache->getStore();
 
             $buffer = $store instanceof LockProvider
-                ? (array) $this->cache->lock($inflightKey.':lock', 5)->block(3, $claim)
+                ? (array) $store->lock($inflightKey.':lock', 5)->block(3, $claim)
                 : $claim();
         } catch (Throwable $exception) {
             $this->failureLogger->once('Error notification buffer could not be claimed.', $exception);
@@ -271,7 +271,7 @@ class ErrorNotificationGuard
         }
 
         try {
-            return (bool) $this->cache->lock($key.':lock', 5)->block(3, $mutate);
+            return (bool) $store->lock($key.':lock', 5)->block(3, $mutate);
         } catch (LockTimeoutException $exception) {
             // Losing the race only costs this one occurrence; the window that
             // already exists will still be delivered.
