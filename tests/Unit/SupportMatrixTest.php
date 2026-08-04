@@ -93,6 +93,25 @@ class SupportMatrixTest extends TestCase
         return (string) $constraints[0];
     }
 
+    /**
+     * Skip when composer.json is not the committed one.
+     *
+     * Each matrix cell pins a single Laravel and Testbench version into the
+     * manifest before installing, so inside those jobs `require-dev` describes
+     * that one cell rather than the package's real support range. Comparing the
+     * whole matrix against it would report a contradiction that does not exist.
+     * The package never declares laravel/framework itself, so its presence in
+     * require-dev is a reliable marker that CI rewrote the file.
+     */
+    private function requirePristineManifest(): void
+    {
+        $devRequire = $this->composerJson()['require-dev'] ?? [];
+
+        if (isset($devRequire['laravel/framework'])) {
+            $this->markTestSkipped('composer.json was pinned by the CI matrix; checked in the unpinned jobs.');
+        }
+    }
+
     public function test_the_ci_matrix_is_not_empty(): void
     {
         $this->assertNotEmpty($this->matrixRows(), 'The CI matrix could not be parsed.');
@@ -172,6 +191,8 @@ class SupportMatrixTest extends TestCase
 
     public function test_every_testbench_major_in_ci_is_allowed_by_the_dev_constraint(): void
     {
+        $this->requirePristineManifest();
+
         $constraint = (string) $this->composerJson()['require-dev']['orchestra/testbench'];
 
         foreach ($this->matrixRows() as $row) {
