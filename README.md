@@ -4,7 +4,7 @@
 
 - Composer package: `apkk/laravel-security-guard`
 - PHP namespace: `Apkk\LaravelSecurityGuard`
-- 対応: PHP `^8.1` / Laravel `10` `11` `12` `13`
+- 対応: PHP `^8.2` / Laravel `12` `13`
 
 このパッケージは**WAF・CDN・Webサーバー設定の代替ではありません**。アプリケーション層の1レイヤーとして併用してください。
 
@@ -63,7 +63,7 @@ migrationはパッケージから自動読み込みされるため、テーブ�
 
 `Apkk\LaravelSecurityGuard\Http\Middleware\GuardPublicRequests`をグローバル登録します。ルートが存在しないパスへの探索も検知するため、**ルートmiddlewareではなくグローバル登録**を推奨します。
 
-Laravel 11 / 12 / 13 (`bootstrap/app.php`):
+`bootstrap/app.php`:
 
 ```php
 use Apkk\LaravelSecurityGuard\Http\Middleware\GuardPublicRequests;
@@ -71,15 +71,6 @@ use Apkk\LaravelSecurityGuard\Http\Middleware\GuardPublicRequests;
 ->withMiddleware(function (Middleware $middleware) {
     $middleware->prepend(GuardPublicRequests::class);
 })
-```
-
-Laravel 10 (`app/Http/Kernel.php`):
-
-```php
-protected $middleware = [
-    \Apkk\LaravelSecurityGuard\Http\Middleware\GuardPublicRequests::class,
-    // ...
-];
 ```
 
 エイリアス`security-guard`も登録済みなので、特定のルートグループだけに適用することもできます。
@@ -433,6 +424,32 @@ php artisan security-guard:admin-ip:revoke 1234 203.0.113.10 --type=admin
 - 攻撃元IPの地理情報取得や外部レピュテーション判定
 
 v1のIP照合は完全一致のみです。CIDR、IPv6 subnet、trusted internal networkは含みません。将来の追加は`IpMatcherContract`の実装差し替えで行えます。
+
+## サポートポリシー
+
+正式対応は、**Laravel公式のセキュリティ修正期間内にあるメジャーバージョン**に限定します。
+
+| Laravel | PHP | 状態 | Laravel公式のセキュリティ修正期限 |
+| --- | --- | --- | --- |
+| 13.x | 8.3 / 8.4 / 8.5 | 正式対応 | 2028-03-17 |
+| 12.x | 8.2 / 8.3 / 8.4 | 正式対応 | 2027-02-24 |
+| 11.x | — | 対応対象外 | 2026-03-12 に終了 |
+| 10.x | — | 対応対象外 | 2025-02-04 に終了 |
+
+Composerの制約下限は、メジャーの `.0` ではなく**セキュリティ勧告の対象外となる最古のパッチバージョン**です（`^12.61.1 || ^13.12.0`）。
+
+### Laravel 10・11を対応対象外とする理由
+
+両系統は上流のセキュリティ修正期間を終えており、**全リリースが未修正の勧告の対象**です（10.x: 5件、11.x: 7件）。Composer 2.9以降は既定でこれらの解決を拒否します。
+
+回避には利用者側でセキュリティブロックの無効化が必要になりますが、セキュリティ対策パッケージの導入手順としてそれを案内することはしません。またlegacyブランチや別パッケージも提供しません。Laravel本体の未修正脆弱性は、このパッケージでは解消できないためです。
+
+「コード上は動作する可能性がある」といった記載も行いません。動作可能であることと安全に利用できることは別だからです。
+
+### 今後の変更
+
+- Laravel 12は**2027-02-24**をもって正式対応から外します。それ以降に公開するバージョンはLaravel 13以降のみを対象とします
+- CIで依存解決できないバージョンは、正式対応対象に含めません
 
 ## 運用上の前提
 

@@ -9,6 +9,12 @@ jobs:
   # One job per supported Laravel major on the PHP versions that major
   # actually supports. A Composer constraint is not a claim of support;
   # only a green cell here is.
+  #
+  # Laravel 10 and 11 are absent deliberately. Both are past their upstream
+  # security-fix window and every release of each carries unfixed advisories,
+  # so Composer's advisory policy refuses to install them. Composer's blocking
+  # stays ON here: a version this project cannot resolve without disabling a
+  # security check is not a version this project supports.
   test:
     runs-on: ubuntu-latest
 
@@ -16,16 +22,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { php: '8.1', laravel: '10.*', testbench: '8.*', dependencies: 'highest' }
-          - { php: '8.1', laravel: '10.*', testbench: '8.*', dependencies: 'lowest' }
-          - { php: '8.2', laravel: '10.*', testbench: '8.*', dependencies: 'highest' }
-          - { php: '8.2', laravel: '11.*', testbench: '9.*', dependencies: 'highest' }
-          - { php: '8.3', laravel: '11.*', testbench: '9.*', dependencies: 'highest' }
+          - { php: '8.2', laravel: '12.*', testbench: '10.*', dependencies: 'lowest' }
           - { php: '8.2', laravel: '12.*', testbench: '10.*', dependencies: 'highest' }
           - { php: '8.3', laravel: '12.*', testbench: '10.*', dependencies: 'highest' }
           - { php: '8.4', laravel: '12.*', testbench: '10.*', dependencies: 'highest' }
+          - { php: '8.3', laravel: '13.*', testbench: '11.*', dependencies: 'lowest' }
           - { php: '8.3', laravel: '13.*', testbench: '11.*', dependencies: 'highest' }
           - { php: '8.4', laravel: '13.*', testbench: '11.*', dependencies: 'highest' }
+          - { php: '8.5', laravel: '13.*', testbench: '11.*', dependencies: 'highest' }
 
     name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }} / ${{ matrix.dependencies }}
 
