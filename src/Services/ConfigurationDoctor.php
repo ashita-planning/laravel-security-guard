@@ -866,18 +866,36 @@ class ConfigurationDoctor
         if ($missing !== []) {
             // The UI releases blocks. Exposing it without both checks hands an
             // attacker the ability to unblock themselves.
+            $exposes = 'This screen can release blocked addresses.';
+
+            if ((bool) $this->config->get('security-guard.management_ui.admin_allowed_ips.enabled', false)) {
+                // Worse: the allowlist screen tells a reader exactly which
+                // networks reach the admin area, and for which subjects.
+                $exposes .= ' The allowlist screen is also enabled, which publishes which networks reach the admin area.';
+            }
+
             return [DiagnosticResult::failure(
                 'management_ui',
                 'The management UI is missing '.implode(' and ', $missing).'.',
-                'Add them to security-guard.management_ui.middleware. This screen can release blocked addresses.',
+                'Add them to security-guard.management_ui.middleware. '.$exposes,
                 ['middleware' => implode(', ', $middleware)],
             )];
         }
 
-        return [DiagnosticResult::ok('management_ui', 'The management UI requires authentication and authorization.', [
+        $results = [DiagnosticResult::ok('management_ui', 'The management UI requires authentication and authorization.', [
             'middleware' => implode(', ', $middleware),
             'prefix' => (string) $this->config->get('security-guard.management_ui.prefix', 'security-guard'),
         ])];
+
+        if ((bool) $this->config->get('security-guard.management_ui.admin_allowed_ips.enabled', false)) {
+            $results[] = DiagnosticResult::ok(
+                'management_ui.admin_allowed_ips',
+                'The allowlist screen is enabled and read-only.',
+                ['middleware' => implode(', ', $middleware)],
+            );
+        }
+
+        return $results;
     }
 
     /**

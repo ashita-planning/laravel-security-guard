@@ -253,6 +253,14 @@ return [
     'management_ui' => [
         'enabled' => false,
         'prefix' => 'security-guard',
+
+        // Separate opt-in. Which networks reach the admin area, and for whom,
+        // is more sensitive than the block list, and an upgrade must not add
+        // that screen to an installation that only asked for the block one.
+        // Read-only: the package ships no route that changes an allowlist.
+        'admin_allowed_ips' => [
+            'enabled' => false,
+        ],
         'route_name_prefix' => 'security-guard.',
         'middleware' => ['web', 'auth', 'can:manage-security'],
         'per_page' => 50,

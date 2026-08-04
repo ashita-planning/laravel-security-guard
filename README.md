@@ -432,6 +432,29 @@ php artisan security-guard:doctor --strict --json
 
 出力に秘密情報は含まれません。cache prefixやdriver名などの設定値のみを表示します。
 
+### 管理許可IPの閲覧画面
+
+管理領域の許可ルールを一覧するだけの**閲覧専用**画面です。既定で無効、かつ**独立した設定**が必要です。
+
+```php
+'management_ui' => [
+    'enabled' => true,
+    'admin_allowed_ips' => [
+        'enabled' => true,   // これも true のときだけルート登録
+    ],
+],
+```
+
+`management_ui.enabled` だけでは有効になりません。v0.1.x で管理UIを有効にしていた導入先へ、アップデートだけで「どの主体にどの範囲を許可しているか」という機密情報の画面が増えないようにするためです。
+
+`security-guard/admin-allowed-ips` に登録され、middlewareは既存の管理UI設定を継承します。
+
+表示項目は `subject_type`、`subject_id`、canonical化されたルール、種別（`Exact` / `CIDR`）、許可アドレス数、ラベル、有効状態、作成・更新日時です。doctorと同じ観点の警告（解析不能、非canonical、過度に広い、semantic duplicate）を該当行に添えて表示します。解析不能な行があっても画面全体は落ちません。
+
+主体、ルール文字列、種別、有効状態で絞り込みでき、ページネーションに対応します。
+
+**書き込みルートは存在しません。** 追加・削除はCLI（`admin-ip:allow` / `admin-ip:revoke`）のみです。UIから権限付与できると、認可設定の誤りがそのまま管理アクセス権の付与につながるためです。ホストのユーザーテーブルとは結合せず、`subject_type` と `subject_id` は保存値のみを表示します。
+
 ## Artisanコマンド
 
 ```bash

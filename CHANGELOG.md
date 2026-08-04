@@ -21,6 +21,15 @@ migration note.
   be removed using what the operator originally typed.
 - `security-guard:admin-ip:list` labels each rule exact or CIDR and reports how
   many addresses it admits.
+- **Read-only administrative allowlist screen** at
+  `security-guard/admin-allowed-ips`, behind its own
+  `management_ui.admin_allowed_ips.enabled` switch in addition to
+  `management_ui.enabled`. Shows the subject, the canonical rule, whether it is
+  exact or a network, how many addresses it admits, and the same findings the
+  doctor reports. Filtering and pagination included. No create, update or
+  delete route exists: granting administrative access stays in the CLI, where a
+  misconfigured authorisation rule cannot reach it. Nothing is joined onto the
+  host's user table.
 - Doctor checks for IP rules: unparseable entries in config or the database,
   host bits, semantic duplicates, redundant `/32` and `/128` suffixes, rules
   wider than `ip_rules.minimum_prefix`, and CIDR rules configured while an

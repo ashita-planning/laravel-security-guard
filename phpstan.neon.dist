@@ -16,4 +16,6 @@ parameters:
         # a literal view-string here.
         -
             identifier: argument.type
-            path: src/Http/Controllers/BlockedIpController.php
+            paths:
+                - src/Http/Controllers/BlockedIpController.php
+                - src/Http/Controllers/AdminAllowedIpController.php

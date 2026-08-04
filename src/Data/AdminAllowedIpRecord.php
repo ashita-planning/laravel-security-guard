@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Apkk\LaravelSecurityGuard\Data;
 
+use DateTimeImmutable;
+use DateTimeInterface;
+
 final class AdminAllowedIpRecord
 {
     public function __construct(
@@ -13,6 +16,8 @@ final class AdminAllowedIpRecord
         public readonly string $ipAddress,
         public readonly ?string $label,
         public readonly bool $enabled,
+        public readonly ?DateTimeImmutable $createdAt = null,
+        public readonly ?DateTimeImmutable $updatedAt = null,
     ) {}
 
     /**
@@ -27,6 +32,25 @@ final class AdminAllowedIpRecord
             ipAddress: (string) $attributes['ip_address'],
             label: isset($attributes['label']) ? (string) $attributes['label'] : null,
             enabled: (bool) ($attributes['enabled'] ?? true),
+            createdAt: self::toDate($attributes['created_at'] ?? null),
+            updatedAt: self::toDate($attributes['updated_at'] ?? null),
         );
+    }
+
+    private static function toDate(mixed $value): ?DateTimeImmutable
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if ($value instanceof DateTimeImmutable) {
+            return $value;
+        }
+
+        if ($value instanceof DateTimeInterface) {
+            return DateTimeImmutable::createFromInterface($value);
+        }
+
+        return new DateTimeImmutable((string) $value);
     }
 }

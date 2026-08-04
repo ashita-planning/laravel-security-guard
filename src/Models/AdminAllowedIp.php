@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Apkk\LaravelSecurityGuard\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 
 /**
  * @property int $id
@@ -13,6 +14,8 @@ use Illuminate\Database\Eloquent\Model;
  * @property string $ip_address
  * @property string|null $label
  * @property bool $enabled
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
  */
 class AdminAllowedIp extends Model
 {

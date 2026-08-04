@@ -128,6 +128,89 @@ class EloquentAdminAllowedIpRepository implements AdminAllowedIpRepositoryContra
             ->all();
     }
 
+    public function paginate(array $filters = [], int $perPage = 50, int $page = 1): array
+    {
+        $perPage = max(1, min(200, $perPage));
+        $page = max(1, $page);
+
+        $query = AdminAllowedIp::query();
+
+        if (! empty($filters['subject_type'])) {
+            $query->where('subject_type', (string) $filters['subject_type']);
+        }
+
+        if (! empty($filters['subject_id'])) {
+            $query->where('subject_id', (string) $filters['subject_id']);
+        }
+
+        if (! empty($filters['ip'])) {
+            // Escaped so an operator pasting a rule containing % or _ searches
+            // for that literal instead of a wildcard.
+            $needle = addcslashes((string) $filters['ip'], '%_\\');
+            $query->where('ip_address', 'like', "%{$needle}%");
+        }
+
+        // Kind is derived from canonical storage: only a network keeps a slash.
+        if (($filters['kind'] ?? null) === 'cidr') {
+            $query->where('ip_address', 'like', '%/%');
+        } elseif (($filters['kind'] ?? null) === 'exact') {
+            $query->where('ip_address', 'not like', '%/%');
+        }
+
+        if (isset($filters['enabled'])) {
+            $query->where('enabled', (bool) $filters['enabled']);
+        }
+
+        $total = (clone $query)->count();
+
+        $models = $query
+            ->orderBy('subject_type')
+            ->orderBy('subject_id')
+            ->orderBy('ip_address')
+            ->forPage($page, $perPage)
+            ->get();
+
+        return [
+            'items' => $models->map(fn (AdminAllowedIp $model): AdminAllowedIpRecord => $this->toRecord($model))->all(),
+            'total' => $total,
+            'page' => $page,
+            'per_page' => $perPage,
+        ];
+    }
+
+    public function canonicalCounts(array $subjects): array
+    {
+        if ($subjects === []) {
+            return [];
+        }
+
+        $query = AdminAllowedIp::query();
+
+        $query->where(function ($outer) use ($subjects): void {
+            foreach ($subjects as $subject) {
+                $outer->orWhere(function ($inner) use ($subject): void {
+                    $inner->where('subject_type', $subject->type)
+                        ->where('subject_id', $subject->id);
+                });
+            }
+        });
+
+        $counts = [];
+
+        foreach ($query->get(['subject_type', 'subject_id', 'ip_address']) as $row) {
+            $canonical = self::canonicalize((string) $row->ip_address);
+
+            if ($canonical === null) {
+                continue;
+            }
+
+            $key = $row->subject_type.'|'.$row->subject_id.'|'.$canonical;
+            $counts[$key] = ($counts[$key] ?? 0) + 1;
+        }
+
+        return $counts;
+    }
+
     protected function toRecord(AdminAllowedIp $model): AdminAllowedIpRecord
     {
         return AdminAllowedIpRecord::fromArray([
@@ -137,6 +220,8 @@ class EloquentAdminAllowedIpRepository implements AdminAllowedIpRepositoryContra
             'ip_address' => $model->ip_address,
             'label' => $model->label,
             'enabled' => $model->enabled,
+            'created_at' => $model->created_at,
+            'updated_at' => $model->updated_at,
         ]);
     }
 }
