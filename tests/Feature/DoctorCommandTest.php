@@ -84,9 +84,21 @@ class DoctorCommandTest extends TestCase
 
         foreach ($report['results'] as $result) {
             $this->assertArrayHasKey('check', $result);
-            $this->assertArrayHasKey('status', $result);
+            $this->assertArrayHasKey('state', $result);
+            $this->assertArrayHasKey('severity', $result);
             $this->assertArrayHasKey('message', $result);
-            $this->assertContains($result['status'], ['ok', 'warning', 'failure', 'skipped']);
+
+            // State and severity are orthogonal: a check that did not run
+            // carries no severity at all.
+            $this->assertContains($result['state'], ['executed', 'skipped']);
+
+            if ($result['state'] === 'skipped') {
+                $this->assertNull($result['severity']);
+
+                continue;
+            }
+
+            $this->assertContains($result['severity'], ['ok', 'warning', 'failure']);
         }
     }
 
@@ -94,7 +106,7 @@ class DoctorCommandTest extends TestCase
     {
         $check = $this->check($this->runJson(), 'laravel_version');
 
-        $this->assertSame('ok', $check['status']);
+        $this->assertSame('ok', $check['severity']);
         $this->assertArrayHasKey('security_support_ends', $check['context']);
     }
 
@@ -104,7 +116,7 @@ class DoctorCommandTest extends TestCase
 
         $check = $this->check($this->runJson(), 'database_tables');
 
-        $this->assertSame('failure', $check['status']);
+        $this->assertSame('failure', $check['severity']);
         $this->assertStringContainsString('migrate', (string) $check['remedy']);
     }
 
@@ -114,14 +126,14 @@ class DoctorCommandTest extends TestCase
 
         $check = $this->check($this->runJson(), 'cache_shared');
 
-        $this->assertSame('failure', $check['status']);
+        $this->assertSame('failure', $check['severity']);
     }
 
     public function test_it_verifies_add_is_a_test_and_set(): void
     {
         $check = $this->check($this->runJson(), 'cache_atomic_add');
 
-        $this->assertSame('ok', $check['status']);
+        $this->assertSame('ok', $check['severity']);
     }
 
     public function test_it_flags_the_default_cache_prefix(): void
@@ -130,7 +142,7 @@ class DoctorCommandTest extends TestCase
 
         $check = $this->check($this->runJson(), 'cache_prefix');
 
-        $this->assertSame('warning', $check['status']);
+        $this->assertSame('warning', $check['severity']);
         $this->assertStringContainsString('prefix', (string) $check['remedy']);
     }
 
@@ -140,7 +152,7 @@ class DoctorCommandTest extends TestCase
 
         $check = $this->check($this->runJson(), 'ip_resolver');
 
-        $this->assertSame('failure', $check['status']);
+        $this->assertSame('failure', $check['severity']);
     }
 
     public function test_it_reports_an_invalid_attack_path_regex(): void
@@ -151,7 +163,7 @@ class DoctorCommandTest extends TestCase
 
         $check = $this->check($this->runJson(), 'attack_patterns');
 
-        $this->assertSame('failure', $check['status']);
+        $this->assertSame('failure', $check['severity']);
         $this->assertStringContainsString('broken', $check['context']['categories']);
     }
 
@@ -163,7 +175,7 @@ class DoctorCommandTest extends TestCase
 
         $check = $this->check($this->runJson(), 'rate_limit_consistency');
 
-        $this->assertSame('failure', $check['status']);
+        $this->assertSame('failure', $check['severity']);
     }
 
     public function test_it_warns_about_paths_excluded_from_blocking(): void
@@ -172,7 +184,7 @@ class DoctorCommandTest extends TestCase
 
         $check = $this->check($this->runJson(), 'permanent_block_exclusions');
 
-        $this->assertSame('warning', $check['status']);
+        $this->assertSame('warning', $check['severity']);
     }
 
     public function test_it_refuses_an_admin_allowlist_that_locks_everyone_out(): void
@@ -182,7 +194,7 @@ class DoctorCommandTest extends TestCase
 
         $check = $this->check($this->runJson(), 'admin_ip_allowlist');
 
-        $this->assertSame('failure', $check['status']);
+        $this->assertSame('failure', $check['severity']);
         $this->assertStringContainsString('admin-ip:allow', (string) $check['remedy']);
     }
 
@@ -195,7 +207,7 @@ class DoctorCommandTest extends TestCase
 
         $check = $this->check($this->runJson(), 'admin_ip_allowlist');
 
-        $this->assertSame('ok', $check['status']);
+        $this->assertSame('ok', $check['severity']);
     }
 
     public function test_it_warns_when_the_allowlist_lets_empty_subjects_through(): void
@@ -205,7 +217,7 @@ class DoctorCommandTest extends TestCase
 
         $check = $this->check($this->runJson(), 'admin_ip_allowlist');
 
-        $this->assertSame('warning', $check['status']);
+        $this->assertSame('warning', $check['severity']);
     }
 
     public function test_it_reports_a_mail_channel_without_recipients(): void
@@ -216,7 +228,7 @@ class DoctorCommandTest extends TestCase
 
         $check = $this->check($this->runJson(), 'notification_recipients');
 
-        $this->assertSame('failure', $check['status']);
+        $this->assertSame('failure', $check['severity']);
     }
 
     public function test_it_reports_an_unresolvable_notification_channel(): void
@@ -226,7 +238,7 @@ class DoctorCommandTest extends TestCase
 
         $check = $this->check($this->runJson(), 'notification_channels');
 
-        $this->assertSame('failure', $check['status']);
+        $this->assertSame('failure', $check['severity']);
     }
 
     public function test_it_warns_when_notifications_run_synchronously(): void
@@ -237,7 +249,7 @@ class DoctorCommandTest extends TestCase
 
         $check = $this->check($this->runJson(), 'queue_connection');
 
-        $this->assertSame('warning', $check['status']);
+        $this->assertSame('warning', $check['severity']);
     }
 
     public function test_it_refuses_a_management_ui_without_authorization(): void
@@ -247,7 +259,7 @@ class DoctorCommandTest extends TestCase
 
         $check = $this->check($this->runJson(), 'management_ui');
 
-        $this->assertSame('failure', $check['status']);
+        $this->assertSame('failure', $check['severity']);
         $this->assertStringContainsString('authorization', $check['message']);
     }
 
@@ -258,7 +270,7 @@ class DoctorCommandTest extends TestCase
 
         $check = $this->check($this->runJson(), 'management_ui');
 
-        $this->assertSame('failure', $check['status']);
+        $this->assertSame('failure', $check['severity']);
     }
 
     public function test_a_guarded_management_ui_passes(): void
@@ -268,7 +280,7 @@ class DoctorCommandTest extends TestCase
 
         $check = $this->check($this->runJson(), 'management_ui');
 
-        $this->assertSame('ok', $check['status']);
+        $this->assertSame('ok', $check['severity']);
     }
 
     public function test_it_refuses_submission_tokens_on_a_per_process_cache(): void
@@ -278,7 +290,7 @@ class DoctorCommandTest extends TestCase
 
         $check = $this->check($this->runJson(), 'submission_token');
 
-        $this->assertSame('failure', $check['status']);
+        $this->assertSame('failure', $check['severity']);
     }
 
     public function test_disabled_modules_are_reported_as_skipped(): void
@@ -286,8 +298,17 @@ class DoctorCommandTest extends TestCase
         $report = $this->runJson();
 
         foreach (['admin_ip_allowlist', 'notifications', 'management_ui', 'submission_token'] as $name) {
-            $this->assertSame('skipped', $this->check($report, $name)['status']);
+            $check = $this->check($report, $name);
+
+            $this->assertSame('skipped', $check['state']);
+            $this->assertNull($check['severity'], 'A check that did not run must not claim a severity.');
         }
+
+        // Skipped checks are counted separately from executed ones.
+        $this->assertSame(
+            $report['summary']['total'],
+            $report['summary']['executed'] + $report['summary']['skipped'],
+        );
     }
 
     public function test_strict_turns_warnings_into_a_non_zero_exit(): void

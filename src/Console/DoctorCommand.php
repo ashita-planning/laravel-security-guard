@@ -67,6 +67,14 @@ class DoctorCommand extends Command
             'exit_code' => $exitCode,
             'summary' => [
                 'total' => count($results),
+                'executed' => count(array_filter(
+                    $results,
+                    static fn (DiagnosticResult $r): bool => $r->wasExecuted(),
+                )),
+                'skipped' => count(array_filter(
+                    $results,
+                    static fn (DiagnosticResult $r): bool => ! $r->wasExecuted(),
+                )),
                 'failures' => count($failures),
                 'warnings' => count($warnings),
             ],
@@ -87,10 +95,11 @@ class DoctorCommand extends Command
         $this->table(
             ['', 'Check', 'Detail'],
             array_map(static fn (DiagnosticResult $r): array => [
-                match ($r->status) {
+                match ($r->severity) {
                     DiagnosticResult::OK => '<fg=green>PASS</>',
                     DiagnosticResult::WARNING => '<fg=yellow>WARN</>',
                     DiagnosticResult::FAILURE => '<fg=red>FAIL</>',
+                    // No severity means the check never ran.
                     default => '<fg=gray>SKIP</>',
                 },
                 $r->check,
@@ -107,7 +116,7 @@ class DoctorCommand extends Command
             $this->line(sprintf(
                 '<fg=%s>%s</> %s',
                 $result->isFailure() ? 'red' : 'yellow',
-                strtoupper($result->status),
+                strtoupper((string) $result->severity),
                 $result->check,
             ));
             $this->line('  '.$result->message);

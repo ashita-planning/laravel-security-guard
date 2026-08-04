@@ -2,9 +2,13 @@
 
 不正アクセス対策をLaravelアプリケーションへ追加するComposerパッケージです。既知攻撃パスの検知、IPの永続遮断、公開レート制限、管理領域のIP許可リスト、ワンタイム送信トークン、無害化された通知を提供します。
 
+[![tests](https://github.com/ashita-planning/laravel-security-guard/actions/workflows/tests.yml/badge.svg)](https://github.com/ashita-planning/laravel-security-guard/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 - Composer package: `apkk/laravel-security-guard`
 - PHP namespace: `Apkk\LaravelSecurityGuard`
 - 対応: PHP `^8.2` / Laravel `12` `13`
+- 変更履歴: [CHANGELOG.md](CHANGELOG.md) ／ 脆弱性報告: [SECURITY.md](SECURITY.md) ／ 開発: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 このパッケージは**WAF・CDN・Webサーバー設定の代替ではありません**。アプリケーション層の1レイヤーとして併用してください。
 
@@ -388,20 +392,39 @@ php artisan security-guard:doctor --strict --json
 | `1` | failureあり |
 | `2` | warningあり、かつ`--strict`指定時 |
 
-`--json`は`--strict`の判定結果を含む機械可読な文書を出力します。
+#### 結果スキーマ
+
+各検査結果は「**実行状態**」と「**重大度**」を分けて持ちます。実行されなかった検査に重大度はありません。`ok`と扱えば誰も検証していない保証を主張することになり、warningと扱えば有効化していない機能への対応を求めることになるためです。
+
+| フィールド | 値 | 意味 |
+| --- | --- | --- |
+| `state` | `executed` / `skipped` | 検査が実行されたか |
+| `severity` | `ok` / `warning` / `failure` | 実行された場合の重大度。`skipped`のときは`null` |
+
+重大度が3値なのは、「動作するが本番では脆い」と「壊れている・危険」を区別するためです。同一視すると`--strict`が使い物にならないか、実用にならないかのどちらかになります。
 
 ```json
 {
   "healthy": false,
+  "strict": false,
   "exit_code": 1,
-  "summary": { "total": 16, "failures": 1, "warnings": 3 },
+  "summary": { "total": 16, "executed": 12, "skipped": 4, "failures": 1, "warnings": 3 },
   "results": [
     {
       "check": "admin_ip_allowlist",
-      "status": "failure",
+      "state": "executed",
+      "severity": "failure",
       "message": "The allowlist is enabled with no entries and empty_policy is \"deny\".",
       "remedy": "Register an address first: `php artisan security-guard:admin-ip:allow <subject> <ip>`. Nobody can sign in until you do.",
       "context": { "entries": "0", "empty_policy": "deny" }
+    },
+    {
+      "check": "submission_token",
+      "state": "skipped",
+      "severity": null,
+      "message": "One-time submission tokens are disabled.",
+      "remedy": null,
+      "context": {}
     }
   ]
 }
@@ -541,12 +564,22 @@ Composerの制約下限は、メジャーの `.0` ではなく**セキュリテ�
 ## 開発
 
 ```bash
-composer test
+composer install
 ```
 
 ```bash
-composer lint
+composer check
 ```
+
+`composer check` はCIと同じ3つのゲート（Pint、PHPStan level 6、PHPUnit）を実行します。
+
+```bash
+SECURITY_GUARD_TEST_DB=mysql DB_HOST=127.0.0.1 DB_PORT=3306 DB_USERNAME=root DB_PASSWORD=secret vendor/bin/phpunit
+```
+
+`composer.lock` は意図的にコミットしていません。ライブラリのため、1つの依存解決だけを検証するのではなく、対応範囲全体を検証します。
+
+詳細は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
 
 ## License
 
