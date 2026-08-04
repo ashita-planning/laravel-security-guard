@@ -7,6 +7,8 @@ is still inside its own upstream security-fix window.
 
 | Package | Laravel | PHP | Status | Laravel security fixes end |
 | --- | --- | --- | --- | --- |
+| `0.2.x` | 13.x (>= 13.12.0) | 8.3, 8.4, 8.5 | Supported | 2028-03-17 |
+| `0.2.x` | 12.x (>= 12.61.1) | 8.2, 8.3, 8.4 | Supported | 2027-02-24 |
 | `0.1.x` | 13.x (>= 13.12.0) | 8.3, 8.4, 8.5 | Supported | 2028-03-17 |
 | `0.1.x` | 12.x (>= 12.61.1) | 8.2, 8.3, 8.4 | Supported | 2027-02-24 |
 | — | 11.x | — | Not supported | ended 2026-03-12 |
@@ -59,6 +61,14 @@ Credit is given in the advisory and the changelog unless you ask otherwise.
 - Privilege or authorisation flaws in the bundled management UI
 - Insufficient randomness or a race in one-time submission tokens
 - Injection through configuration this package parses
+- A CIDR boundary decided wrongly, so a rule admits or refuses an address
+  outside what its prefix describes
+- An IPv4 rule admitting an IPv6 address, or the reverse
+- A non-canonical rule quietly granting or refusing more than it appears to
+- Information disclosure from the administrative allowlist screen, including
+  anything that reveals host account attributes rather than the stored
+  `subject_type` and `subject_id`
+- Any write path reaching the allowlist screen, which is read-only by design
 
 ### Out of scope
 
@@ -69,8 +79,8 @@ Credit is given in the advisory and the changelog unless you ask otherwise.
   `permanent_block.excluded_paths`, which documents itself as waiving the guard
 - Attacks needing a cache or database an attacker can already write to
 - Anything requiring an already-compromised administrator session
-- Absence of features this package documents as out of scope, including CIDR
-  matching, WAF behaviour, CAPTCHA and MFA
+- Absence of features this package documents as out of scope, including WAF
+  behaviour, CAPTCHA and MFA
 
 ## What this package does not do
 
@@ -89,6 +99,13 @@ input of business routes — those still need their own FormRequests.
   identifier-shaped fields that do exist are re-validated on construction.
 - **Cache keys are hashed.** No raw IP address or e-mail address appears in a
   key.
+- **IP rules fail closed.** An entry that cannot be parsed matches nothing
+  rather than everything, so a typo locks its owner out instead of admitting
+  strangers. Families never cross: an IPv4 rule does not admit an IPv4-mapped
+  IPv6 address.
+- **Administrative access is granted from the CLI only.** The bundled allowlist
+  screen is read-only and ships disabled behind its own opt-in; the package
+  registers no route that creates, edits or deletes an allowlist rule.
 - **Responses are fixed strings.** Nothing from the request is reflected back.
 - **Host-supplied regular expressions are attacker-adjacent.** They are
   compiled defensively and an invalid pattern is skipped rather than raised,

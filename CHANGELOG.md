@@ -11,6 +11,10 @@ migration note.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.2.0] - 2026-08-04
+
 ### Added
 
 - **CIDR matching for IP rules** (#11). `permanent_block.ignored_ips` and the
@@ -148,5 +152,6 @@ that date will target Laravel 13 and later.
 - The LINE Messaging API adapter is not part of this package. Register a custom
   channel on `NotifierRegistry`.
 
-[Unreleased]: https://github.com/ashita-planning/laravel-security-guard/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ashita-planning/laravel-security-guard/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ashita-planning/laravel-security-guard/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ashita-planning/laravel-security-guard/releases/tag/v0.1.0

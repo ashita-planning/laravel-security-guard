@@ -222,6 +222,64 @@ class CidrAllowlistTest extends TestCase
         $this->assertSame(1, $queries);
     }
 
+    public function test_a_large_allowlist_still_costs_one_query_and_answers_correctly(): void
+    {
+        config()->set('security-guard.admin_ip.enabled', true);
+
+        $subject = new AdminSubjectData(self::SUBJECT_TYPE, '900');
+        $now = now();
+        $rows = [];
+
+        for ($i = 0; $i < 1000; $i++) {
+            $rows[] = [
+                'subject_type' => self::SUBJECT_TYPE,
+                'subject_id' => '900',
+                'ip_address' => match ($i % 4) {
+                    0 => sprintf('10.%d.%d.%d', ($i >> 16) & 255, ($i >> 8) & 255, $i & 255),
+                    1 => sprintf('172.%d.%d.0/24', 16 + (($i >> 8) % 16), $i & 255),
+                    2 => sprintf('2001:db8:%x::%x', ($i >> 8) & 0xFFFF, $i & 0xFFFF),
+                    default => sprintf('2001:db9:%x::/64', $i & 0xFFFF),
+                },
+                'enabled' => true,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
+        }
+
+        // A row the matcher cannot parse, mixed in with the rest.
+        $rows[] = [
+            'subject_type' => self::SUBJECT_TYPE,
+            'subject_id' => '900',
+            'ip_address' => '10.0.0.1-10.0.0.99',
+            'enabled' => true,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ];
+
+        foreach (array_chunk($rows, 200) as $chunk) {
+            AdminAllowedIp::query()->insert($chunk);
+        }
+
+        $repository = $this->app->make(AdminAllowedIpRepositoryContract::class);
+
+        $queries = 0;
+        $this->app->make('db')->listen(function () use (&$queries): void {
+            $queries++;
+        });
+
+        // The "no migration, match in PHP" decision rests on rule count not
+        // driving query count. If that ever stops holding, the binary columns
+        // become necessary and this test is where it surfaces.
+        $this->assertTrue($repository->isAllowed($subject, '10.0.0.0'));
+        $this->assertSame(1, $queries);
+
+        // Correctness must not drift with size, and the corrupt row must not
+        // become a wildcard.
+        $this->assertTrue($repository->isAllowed($subject, '2001:db9:3::99'));
+        $this->assertFalse($repository->isAllowed($subject, '198.51.100.200'));
+        $this->assertFalse($repository->isAllowed($subject, '10.0.0.50'));
+    }
+
     // -----------------------------------------------------------------
     // Canonical storage
     // -----------------------------------------------------------------
