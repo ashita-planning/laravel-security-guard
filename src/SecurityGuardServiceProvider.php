@@ -9,6 +9,7 @@ use Apkk\LaravelSecurityGuard\Console\AdminIpListCommand;
 use Apkk\LaravelSecurityGuard\Console\AdminIpRevokeCommand;
 use Apkk\LaravelSecurityGuard\Console\BlockedListCommand;
 use Apkk\LaravelSecurityGuard\Console\BlockedReleaseCommand;
+use Apkk\LaravelSecurityGuard\Console\DoctorCommand;
 use Apkk\LaravelSecurityGuard\Console\StatusCommand;
 use Apkk\LaravelSecurityGuard\Contracts\AdminAllowedIpRepositoryContract;
 use Apkk\LaravelSecurityGuard\Contracts\AdminSubjectResolverContract;
@@ -31,6 +32,7 @@ use Apkk\LaravelSecurityGuard\Services\AdminIpAccessService;
 use Apkk\LaravelSecurityGuard\Services\BlockResponseFactory;
 use Apkk\LaravelSecurityGuard\Services\ConfigAdminSubjectResolver;
 use Apkk\LaravelSecurityGuard\Services\ConfigAttackPathMatcher;
+use Apkk\LaravelSecurityGuard\Services\ConfigurationDoctor;
 use Apkk\LaravelSecurityGuard\Services\DailyLimiter;
 use Apkk\LaravelSecurityGuard\Services\ErrorNotificationGuard;
 use Apkk\LaravelSecurityGuard\Services\ExactIpMatcher;
@@ -50,6 +52,7 @@ use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
+use Illuminate\Database\DatabaseManager;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\RateLimiter;
@@ -92,6 +95,7 @@ class SecurityGuardServiceProvider extends ServiceProvider
                 AdminIpListCommand::class,
                 AdminIpRevokeCommand::class,
                 StatusCommand::class,
+                DoctorCommand::class,
             ]);
         }
     }
@@ -207,6 +211,17 @@ class SecurityGuardServiceProvider extends ServiceProvider
             $app->bound(Contracts\ErrorNotificationOutcomeHandlerContract::class)
                 ? $app->make(Contracts\ErrorNotificationOutcomeHandlerContract::class)
                 : null,
+        ));
+
+        $this->app->singleton(ConfigurationDoctor::class, fn ($app): ConfigurationDoctor => new ConfigurationDoctor(
+            $app,
+            $app->make(ConfigRepository::class),
+            $app->make(self::CACHE),
+            $app->make(CacheKeyFactory::class),
+            $app->make(DatabaseManager::class),
+            $app->make(ClientIpResolverContract::class),
+            $app->make(AttackPathMatcherContract::class),
+            $app->make(NotifierRegistry::class),
         ));
 
         $this->app->singleton(AdminIpAccessService::class);

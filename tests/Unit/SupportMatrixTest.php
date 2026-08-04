@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Apkk\LaravelSecurityGuard\Tests\Unit;
 
+use Apkk\LaravelSecurityGuard\Support\SupportedVersions;
 use Composer\Semver\Semver;
 use PHPUnit\Framework\TestCase;
 
@@ -161,6 +162,50 @@ class SupportMatrixTest extends TestCase
         $this->assertTrue(Semver::satisfies('12.61.1', $constraint));
         $this->assertFalse(Semver::satisfies('13.11.0', $constraint));
         $this->assertTrue(Semver::satisfies('13.12.0', $constraint));
+    }
+
+    public function test_the_doctor_floors_match_the_composer_constraint(): void
+    {
+        $constraint = $this->illuminateConstraint();
+
+        // The doctor tells operators their Laravel is too old. If its floors
+        // drifted from the manifest it would either wave through an install
+        // Composer will refuse, or reject one that is perfectly fine.
+        foreach (SupportedVersions::majors() as $major) {
+            $floor = (string) SupportedVersions::floorFor($major);
+
+            $this->assertTrue(
+                Semver::satisfies($floor, $constraint),
+                "SupportedVersions floor {$floor} is not permitted by {$constraint}.",
+            );
+
+            $this->assertSame(
+                $major,
+                explode('.', $floor)[0],
+                "The floor registered for Laravel {$major} is a {$floor} version.",
+            );
+        }
+
+        $ciMajors = array_unique(array_map(
+            static fn (array $row): string => rtrim($row['laravel'], '.*'),
+            $this->matrixRows(),
+        ));
+
+        $this->assertSame(
+            array_values($ciMajors),
+            array_values(SupportedVersions::majors()),
+            'SupportedVersions and the CI matrix disagree on which majors are supported.',
+        );
+    }
+
+    public function test_every_supported_major_declares_a_security_support_end_date(): void
+    {
+        foreach (SupportedVersions::majors() as $major) {
+            $ends = SupportedVersions::supportEndsFor($major);
+
+            $this->assertNotNull($ends, "Laravel {$major} has no security support end date.");
+            $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}$/', $ends);
+        }
     }
 
     public function test_every_php_version_in_ci_is_allowed_by_the_constraint(): void

@@ -47,7 +47,7 @@ migrationはパッケージから自動読み込みされるため、テーブ�
 
 ## 段階的な導入手順
 
-1. configを公開し、全機能を無効のまま設定値を確認する
+1. configを公開し、全機能を無効のまま`php artisan security-guard:doctor`で設定を検査する
 2. trusted proxyとclient IP解決結果を`php artisan security-guard:status <ip>`で確認する
 3. `permanent_block.ignored_ips`へ監視・社内・保守元IPを登録する
 4. 公開middlewareを登録し、attack path detectorと永続遮断のみ有効化する
@@ -57,7 +57,8 @@ migrationはパッケージから自動読み込みされるため、テーブ�
 8. 管理者許可IPをCLIで登録してから管理IP制限を有効化する
 9. センシティブルルートへprofileを個別適用する
 10. queue workerと送信上限を確認してから通知を有効化する
-11. 本番では低リスクな時間帯に適用し、403・429件数とアプリケーションエラーを監視する
+11. 各段階の前後で`php artisan security-guard:doctor --strict`を実行する
+12. 本番では低リスクな時間帯に適用し、403・429件数とアプリケーションエラーを監視する
 
 ## 公開リクエストの保護
 
@@ -349,7 +350,70 @@ $url = app(ErrorNotificationGuard::class)->sanitizeUrl($request->fullUrl());
 
 有効化した場合のみルートを登録します。解除はPOST・CSRF・認可・FormRequest検証が必須です。viewは`security-guard-views`タグでpublishして差し替えられます。
 
+## 導入前診断 (doctor)
+
+有効化の前に設定の妥当性を検査します。このパッケージの誤設定はほとんど例外を出さず、**黙って防御が効かなくなる**か、**誰かがログインしようとした瞬間に全管理者が締め出される**形で現れるため、事前に可視化するためのコマンドです。
+
+```bash
+php artisan security-guard:doctor
+```
+
+検査対象:
+
+| 項目 | 内容 |
+| --- | --- |
+| Laravelバージョン | 対応範囲内か。12は`12.61.1`以上、13は`13.12.0`以上か |
+| DB | 接続可否、必要テーブルの存在 |
+| cache | プロセス間共有か、atomic lock対応か、`add()`がtest-and-setとして動くか |
+| cache prefix | 未設定または既定値のままでないか |
+| IP resolver | driverの妥当性、trusted proxyの設定有無 |
+| 攻撃パスregex | コンパイル可能か（無効なものは実行時に黙って無視されるため） |
+| レート制限の整合性 | `permanent_block`無効時に`action=permanent_block`になっていないか、遮断除外パスの有無 |
+| 管理IP許可リスト | 有効かつ0件で`deny`（＝全員締め出し）になっていないか |
+| 通知 | channelの解決可否、mail宛先、日次上限、queue接続 |
+| 管理UI | 認証・認可middlewareが両方あるか |
+| ワンタイムトークン | 共有cacheを使っているか |
+
+### CI・デプロイでの利用
+
+```bash
+php artisan security-guard:doctor --strict --json
+```
+
+終了コード:
+
+| コード | 意味 |
+| --- | --- |
+| `0` | 問題なし |
+| `1` | failureあり |
+| `2` | warningあり、かつ`--strict`指定時 |
+
+`--json`は`--strict`の判定結果を含む機械可読な文書を出力します。
+
+```json
+{
+  "healthy": false,
+  "exit_code": 1,
+  "summary": { "total": 16, "failures": 1, "warnings": 3 },
+  "results": [
+    {
+      "check": "admin_ip_allowlist",
+      "status": "failure",
+      "message": "The allowlist is enabled with no entries and empty_policy is \"deny\".",
+      "remedy": "Register an address first: `php artisan security-guard:admin-ip:allow <subject> <ip>`. Nobody can sign in until you do.",
+      "context": { "entries": "0", "empty_policy": "deny" }
+    }
+  ]
+}
+```
+
+出力に秘密情報は含まれません。cache prefixやdriver名などの設定値のみを表示します。
+
 ## Artisanコマンド
+
+```bash
+php artisan security-guard:doctor --strict
+```
 
 ```bash
 php artisan security-guard:blocked:list --active
