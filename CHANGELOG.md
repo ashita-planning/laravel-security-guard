@@ -11,7 +11,46 @@ migration note.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **CIDR matching for IP rules** (#11). `permanent_block.ignored_ips` and the
+  administrative allowlist now accept networks (`203.0.113.0/24`,
+  `2001:db8::/48`) alongside individual addresses.
+- `security-guard:admin-ip:allow` and `:revoke` share one canonical form, so a
+  rule registered as `203.0.113.42/24` — stored as `203.0.113.0/24` — can still
+  be removed using what the operator originally typed.
+- `security-guard:admin-ip:list` labels each rule exact or CIDR and reports how
+  many addresses it admits.
+- Doctor checks for IP rules: unparseable entries in config or the database,
+  host bits, semantic duplicates, redundant `/32` and `/128` suffixes, rules
+  wider than `ip_rules.minimum_prefix`, and CIDR rules configured while an
+  exact-only matcher is bound.
+
+### Changed
+
+- `IpMatcherContract` resolves to `CidrIpMatcher` instead of `ExactIpMatcher`.
+  Exact behaviour is unchanged — a bare address is a rule with the widest
+  prefix for its family — so every v0.1.x entry matches exactly what it matched
+  before. `ExactIpMatcher` remains available as an explicit opt-out, with the
+  caveat that under it a CIDR entry silently matches nothing.
+- `security-guard:admin-ip:allow` refuses a `/0` rule unless `--force` is
+  given. Such a rule admits every address in its family, which is not an
+  allowlist.
+
+### Fixed
+
+- `ExactIpMatcher` normalised the entry but not the candidate, so
+  `matches('0:0:0:0:0:0:0:1', ['::1'])` answered false for what is the same
+  address. Every caller normalises first, so this never bit in practice.
+
+### Notes
+
+No migration. Canonical storage keeps the widest possible value —
+`ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128`, 43 characters — inside the
+existing `varchar(45)` column, so v0.1.x rows are untouched and the unique
+constraint still holds. An IPv4 rule never admits an IPv4-mapped IPv6 address:
+allowlisting `203.0.113.0/24` is not consent to admit a v6 client encoding the
+same digits.
 
 ## [0.1.0] - 2026-08-04
 

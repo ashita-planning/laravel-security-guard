@@ -302,14 +302,25 @@ class SupportMatrixTest extends TestCase
         );
     }
 
-    public function test_the_readme_documents_the_cidr_limitation(): void
+    public function test_the_readme_documents_the_cidr_failure_modes(): void
     {
-        // v0.1.0 ships exact matching only; the limitation is documented so a
-        // host does not assume a CIDR entry silently works.
-        $this->assertMatchesRegularExpression(
-            '/CIDR/u',
-            $this->readme(),
-            'The README must state that CIDR notation is not supported.',
+        $readme = $this->readme();
+
+        // v0.1.0 documented that CIDR was unsupported. From v0.2.0 it is
+        // supported, and what needs documenting instead are the two ways a
+        // rule can quietly do something other than what it looks like.
+        $this->assertMatchesRegularExpression('/CIDR/u', $readme);
+
+        $this->assertStringContainsString(
+            'ファミリを跨ぎません',
+            $readme,
+            'The README must state that an IPv4 rule does not admit IPv4-mapped IPv6.',
+        );
+
+        $this->assertStringContainsString(
+            '何にも一致しません',
+            $readme,
+            'The README must state that an unparseable rule matches nothing rather than everything.',
         );
     }
 }

@@ -139,7 +139,12 @@ class SecurityGuardServiceProvider extends ServiceProvider
         $this->app->singleton(IpMatcherContract::class, CidrIpMatcher::class);
         $this->app->singleton(AttackPathMatcherContract::class, ConfigAttackPathMatcher::class);
         $this->app->singleton(BlockedIpRepositoryContract::class, EloquentBlockedIpRepository::class);
-        $this->app->singleton(AdminAllowedIpRepositoryContract::class, EloquentAdminAllowedIpRepository::class);
+        $this->app->singleton(
+            AdminAllowedIpRepositoryContract::class,
+            fn ($app): EloquentAdminAllowedIpRepository => new EloquentAdminAllowedIpRepository(
+                $app->make(IpMatcherContract::class),
+            ),
+        );
         $this->app->singleton(AdminSubjectResolverContract::class, ConfigAdminSubjectResolver::class);
         $this->app->singleton(SecurityEventDispatcherContract::class, QueuedSecurityEventDispatcher::class);
     }
@@ -222,6 +227,7 @@ class SecurityGuardServiceProvider extends ServiceProvider
             $app->make(ClientIpResolverContract::class),
             $app->make(AttackPathMatcherContract::class),
             $app->make(NotifierRegistry::class),
+            $app->make(IpMatcherContract::class),
         ));
 
         $this->app->singleton(AdminIpAccessService::class);

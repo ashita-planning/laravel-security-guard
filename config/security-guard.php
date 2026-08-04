@@ -214,6 +214,23 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | IP rule review thresholds
+    |--------------------------------------------------------------------------
+    |
+    | A rule shorter than these prefixes admits an unusually wide range, so the
+    | doctor asks you to confirm it was intended. Matching itself is unaffected.
+    |
+    */
+
+    'ip_rules' => [
+        'minimum_prefix' => [
+            'v4' => 16,
+            'v6' => 32,
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Diagnostic logging
     |--------------------------------------------------------------------------
     |

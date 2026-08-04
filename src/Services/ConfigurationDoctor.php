@@ -6,10 +6,12 @@ namespace Apkk\LaravelSecurityGuard\Services;
 
 use Apkk\LaravelSecurityGuard\Contracts\AttackPathMatcherContract;
 use Apkk\LaravelSecurityGuard\Contracts\ClientIpResolverContract;
+use Apkk\LaravelSecurityGuard\Contracts\IpMatcherContract;
 use Apkk\LaravelSecurityGuard\Data\DiagnosticResult;
 use Apkk\LaravelSecurityGuard\Models\AdminAllowedIp;
 use Apkk\LaravelSecurityGuard\Notifications\NotifierRegistry;
 use Apkk\LaravelSecurityGuard\Support\CacheKeyFactory;
+use Apkk\LaravelSecurityGuard\Support\IpRange;
 use Apkk\LaravelSecurityGuard\Support\SupportedVersions;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
@@ -43,6 +45,7 @@ class ConfigurationDoctor
         private readonly ClientIpResolverContract $ipResolver,
         private readonly AttackPathMatcherContract $attackPathMatcher,
         private readonly NotifierRegistry $notifiers,
+        private readonly IpMatcherContract $ipMatcher,
     ) {}
 
     /**
@@ -61,7 +64,240 @@ class ConfigurationDoctor
             $this->checkNotifications(),
             $this->checkManagementUi(),
             $this->checkSubmissionToken(),
+            $this->checkIpRules(),
         );
+    }
+
+    /**
+     * Validate every IP rule this installation holds, from config and the
+     * database alike.
+     *
+     * A rule that cannot be parsed matches nothing. On the ignore list that
+     * means an address you meant to exempt is not exempt; on the admin
+     * allowlist it means its owner cannot sign in. Neither raises an error at
+     * runtime, so both are found here or not at all.
+     *
+     * @return array<int, DiagnosticResult>
+     */
+    private function checkIpRules(): array
+    {
+        $results = [$this->checkMatcherSupportsCidr()];
+
+        $configured = array_values(array_filter(
+            array_map('strval', (array) $this->config->get('security-guard.permanent_block.ignored_ips', [])),
+        ));
+
+        $results[] = $this->inspectRules('ignored_ips', $configured);
+
+        if (! (bool) $this->config->get('security-guard.admin_ip.enabled', false)) {
+            return $results;
+        }
+
+        try {
+            $stored = array_map('strval', AdminAllowedIp::query()->where('enabled', true)->pluck('ip_address')->all());
+        } catch (Throwable) {
+            // checkAdminIpAllowlist() already reports an unreadable table.
+            return $results;
+        }
+
+        $results[] = $this->inspectRules('admin_allowed_ips', $stored);
+
+        return $results;
+    }
+
+    /**
+     * The bound matcher has to actually understand the rules that are written.
+     */
+    private function checkMatcherSupportsCidr(): DiagnosticResult
+    {
+        $matcher = $this->ipMatcher;
+
+        if ($matcher instanceof CidrIpMatcher) {
+            return DiagnosticResult::ok('ip_matcher', 'CIDR networks are supported.', [
+                'matcher' => $matcher::class,
+            ]);
+        }
+
+        $cidrRules = array_filter(
+            $this->allConfiguredRules(),
+            static fn (string $entry): bool => str_contains($entry, '/'),
+        );
+
+        if ($cidrRules === []) {
+            return DiagnosticResult::ok('ip_matcher', 'Exact matching only, and no CIDR rules are configured.', [
+                'matcher' => $matcher::class,
+            ]);
+        }
+
+        // The v0.1.x failure mode, reachable again by binding the exact matcher
+        // explicitly: the rule is written, accepted, and silently matches
+        // nothing at all.
+        return DiagnosticResult::failure(
+            'ip_matcher',
+            count($cidrRules).' CIDR rule(s) exist, but the bound matcher only does exact matching.',
+            'Bind CidrIpMatcher (the default), or replace the CIDR rules with individual addresses. As configured they match nothing.',
+            ['matcher' => $matcher::class, 'rules' => implode(', ', array_slice($cidrRules, 0, 5))],
+        );
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function allConfiguredRules(): array
+    {
+        $rules = array_map('strval', (array) $this->config->get('security-guard.permanent_block.ignored_ips', []));
+
+        if ((bool) $this->config->get('security-guard.admin_ip.enabled', false)) {
+            try {
+                $rules = array_merge(
+                    $rules,
+                    array_map('strval', AdminAllowedIp::query()->where('enabled', true)->pluck('ip_address')->all()),
+                );
+            } catch (Throwable) {
+                //
+            }
+        }
+
+        return array_values(array_filter($rules));
+    }
+
+    /**
+     * @param  array<int, string>  $entries
+     */
+    private function inspectRules(string $check, array $entries): DiagnosticResult
+    {
+        if ($entries === []) {
+            return DiagnosticResult::skipped("ip_rules.{$check}", "No {$check} rules are configured.");
+        }
+
+        $unparseable = [];
+        $nonCanonical = [];
+        $redundantSuffix = [];
+        $tooWide = [];
+        /** @var array<string, array<int, string>> $byCanonical */
+        $byCanonical = [];
+
+        foreach ($entries as $entry) {
+            $range = IpRange::parse($entry);
+
+            if ($range === null) {
+                $unparseable[] = $entry;
+
+                continue;
+            }
+
+            $canonical = $range->toString();
+            $byCanonical[$canonical][] = $entry;
+
+            if (! $range->wasCanonical()) {
+                $nonCanonical[] = "{$entry} -> {$canonical}";
+            }
+
+            // `203.0.113.10/32` is stored canonically without the suffix, so a
+            // row still carrying one predates canonicalisation.
+            if ($range->isSingleHost() && str_contains($entry, '/')) {
+                $redundantSuffix[] = $entry;
+            }
+
+            if ($range->prefixLength() < $this->minimumPrefixFor($range->family())) {
+                $tooWide[] = "{$canonical} (".number_format($range->size()).' addresses)';
+            }
+        }
+
+        $duplicates = [];
+
+        foreach ($byCanonical as $canonical => $written) {
+            if (count($written) > 1) {
+                $duplicates[] = $canonical.' <- '.implode(', ', $written);
+            }
+        }
+
+        return $this->summariseRuleFindings(
+            $check,
+            count($entries),
+            $unparseable,
+            $nonCanonical,
+            $redundantSuffix,
+            $tooWide,
+            $duplicates,
+        );
+    }
+
+    /**
+     * @param  array<int, string>  $unparseable
+     * @param  array<int, string>  $nonCanonical
+     * @param  array<int, string>  $redundantSuffix
+     * @param  array<int, string>  $tooWide
+     * @param  array<int, string>  $duplicates
+     */
+    private function summariseRuleFindings(
+        string $check,
+        int $total,
+        array $unparseable,
+        array $nonCanonical,
+        array $redundantSuffix,
+        array $tooWide,
+        array $duplicates,
+    ): DiagnosticResult {
+        $name = "ip_rules.{$check}";
+
+        if ($unparseable !== []) {
+            return DiagnosticResult::failure(
+                $name,
+                count($unparseable).' of '.$total.' rule(s) cannot be parsed and match nothing.',
+                'Correct or remove them. An unparseable rule is not a wildcard: on an allowlist it locks its owner out, on the ignore list it fails to exempt.',
+                ['rules' => implode(', ', array_slice($unparseable, 0, 5))],
+            );
+        }
+
+        if ($tooWide !== []) {
+            return DiagnosticResult::warning(
+                $name,
+                count($tooWide).' rule(s) admit an unusually wide range.',
+                'Confirm this is intended, or narrow the prefix. Widen security-guard.ip_rules.minimum_prefix to change the threshold.',
+                ['rules' => implode(', ', array_slice($tooWide, 0, 5))],
+            );
+        }
+
+        if ($nonCanonical !== []) {
+            return DiagnosticResult::warning(
+                $name,
+                count($nonCanonical).' rule(s) carry host bits and were widened to their network.',
+                'The rule admits more than the written address suggests. Re-write it as the network, or as a single address.',
+                ['rules' => implode(', ', array_slice($nonCanonical, 0, 5))],
+            );
+        }
+
+        if ($duplicates !== []) {
+            return DiagnosticResult::warning(
+                $name,
+                count($duplicates).' rule(s) are written differently but mean the same thing.',
+                'Remove the duplicates so the effective allowlist matches what the list appears to say.',
+                ['rules' => implode('; ', array_slice($duplicates, 0, 3))],
+            );
+        }
+
+        if ($redundantSuffix !== []) {
+            return DiagnosticResult::warning(
+                $name,
+                count($redundantSuffix).' rule(s) keep a redundant /32 or /128 suffix.',
+                'Harmless, but these predate canonicalisation. Re-registering them through the CLI stores the short form.',
+                ['rules' => implode(', ', array_slice($redundantSuffix, 0, 5))],
+            );
+        }
+
+        return DiagnosticResult::ok($name, "All {$total} rule(s) parse cleanly.", [
+            'rules' => (string) $total,
+        ]);
+    }
+
+    private function minimumPrefixFor(int $family): int
+    {
+        $configured = (array) $this->config->get('security-guard.ip_rules.minimum_prefix', []);
+
+        return $family === IpRange::FAMILY_V4
+            ? (int) ($configured['v4'] ?? 16)
+            : (int) ($configured['v6'] ?? 32);
     }
 
     private function checkLaravelVersion(): DiagnosticResult
