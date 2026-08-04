@@ -56,6 +56,17 @@ Nothing yet.
   `matches('0:0:0:0:0:0:0:1', ['::1'])` answered false for what is the same
   address. Every caller normalises first, so this never bit in practice.
 
+### Upgrading from 0.1.x
+
+No migration and no configuration change is required. Existing rows keep their
+ids and values, and every exact rule matches exactly what it matched before.
+
+If you published `config/security-guard.php` under 0.1.x, it has no
+`management_ui.admin_allowed_ips` key. Laravel merges only the top level of a
+package config file, so your published `management_ui` array replaces the
+package default wholesale and the new key resolves to null — the allowlist
+screen stays off, which is the intended default. Add the key by hand to opt in.
+
 ### Notes
 
 No migration. Canonical storage keeps the widest possible value —

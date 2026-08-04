@@ -445,6 +445,8 @@ php artisan security-guard:doctor --strict --json
 ],
 ```
 
+**v0.1.xからアップグレードした場合**、publish済みの `config/security-guard.php` にはこのキーがありません。Laravelの `mergeConfigFrom` はトップレベルしかマージしないため、publish済みファイルの `management_ui` 配列がパッケージ既定を丸ごと置き換えます。結果として値は `null`（＝無効）となり、**アップグレードだけで画面が現れることはありません**。有効化するには、publish済みconfigへ上記のキーを手動で追加してください。
+
 `management_ui.enabled` だけでは有効になりません。v0.1.x で管理UIを有効にしていた導入先へ、アップデートだけで「どの主体にどの範囲を許可しているか」という機密情報の画面が増えないようにするためです。
 
 `security-guard/admin-allowed-ips` に登録され、middlewareは既存の管理UI設定を継承します。
