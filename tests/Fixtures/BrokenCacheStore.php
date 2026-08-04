@@ -48,6 +48,17 @@ class BrokenCacheStore implements Store
         throw new RuntimeException('Cache unavailable.');
     }
 
+    /**
+     * Added to Illuminate\Contracts\Cache\Store in Laravel 13. Declaring it
+     * unconditionally is harmless on 10-12, where it is simply an extra
+     * method, and required on 13, where a missing implementation is a fatal
+     * error at class-definition time.
+     */
+    public function touch($key, $seconds): bool
+    {
+        throw new RuntimeException('Cache unavailable.');
+    }
+
     public function forget($key): bool
     {
         throw new RuntimeException('Cache unavailable.');
