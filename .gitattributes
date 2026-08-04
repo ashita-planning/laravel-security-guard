@@ -1,0 +1,21 @@
+# Keep development-only files out of the distributed archive.
+#
+# Everything below is needed to work on the package and useless to a consumer,
+# who otherwise carries the whole test suite and CI configuration in vendor/.
+# Applies to dist archives (what Composer installs by default); a
+# --prefer-source install still gets the full repository.
+
+/.github            export-ignore
+/tests              export-ignore
+/.gitattributes     export-ignore
+/.gitignore         export-ignore
+/phpunit.xml.dist   export-ignore
+/phpstan.neon.dist  export-ignore
+/pint.json          export-ignore
+/CONTRIBUTING.md    export-ignore
+
+# CHANGELOG.md, SECURITY.md, README.md and LICENSE stay: a consumer reading
+# vendor/ should be able to find the version history and how to report a
+# vulnerability without leaving their project.
+
+* text=auto eol=lf
