@@ -19,6 +19,7 @@ use Apkk\LaravelSecurityGuard\Tests\TestCase;
 use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Route;
 use PHPUnit\Framework\Attributes\DataProvider;
 
@@ -83,6 +84,38 @@ class PackageIntegrationTest extends TestCase
 
         $this->assertCount(1, $config);
         $this->assertStringEndsWith('security-guard.php', array_key_first($config));
+    }
+
+    public function test_every_documented_artisan_command_is_registered(): void
+    {
+        $registered = array_keys(Artisan::all());
+
+        // The README and the rollout guide tell operators to run these; a
+        // command that silently stops being registered breaks the documented
+        // procedure rather than any test.
+        foreach ([
+            'security-guard:doctor',
+            'security-guard:status',
+            'security-guard:blocked:list',
+            'security-guard:blocked:release',
+            'security-guard:admin-ip:allow',
+            'security-guard:admin-ip:list',
+            'security-guard:admin-ip:revoke',
+        ] as $command) {
+            $this->assertContains($command, $registered);
+        }
+    }
+
+    public function test_the_doctor_runs_on_a_freshly_installed_package(): void
+    {
+        // Straight after install, with nothing configured, the doctor must
+        // still produce a usable report instead of blowing up.
+        $exitCode = Artisan::call('security-guard:doctor', ['--json' => true]);
+        $report = json_decode(Artisan::output(), true);
+
+        $this->assertIsArray($report);
+        $this->assertSame($exitCode, $report['exit_code']);
+        $this->assertNotEmpty($report['results']);
     }
 
     public function test_the_middleware_aliases_are_available(): void
