@@ -11,6 +11,7 @@ use Apkk\LaravelSecurityGuard\Contracts\BlockedIpRepositoryContract;
 use Apkk\LaravelSecurityGuard\Contracts\ClientIpResolverContract;
 use Apkk\LaravelSecurityGuard\Contracts\IpMatcherContract;
 use Apkk\LaravelSecurityGuard\Contracts\SecurityEventDispatcherContract;
+use Apkk\LaravelSecurityGuard\Crawlers\CrawlerVerifierRegistry;
 use Apkk\LaravelSecurityGuard\Http\Middleware\GuardPublicRequests;
 use Apkk\LaravelSecurityGuard\SecurityGuardServiceProvider;
 use Apkk\LaravelSecurityGuard\Services\LaravelRequestIpResolver;
@@ -116,6 +117,16 @@ class PackageIntegrationTest extends TestCase
         $this->assertIsArray($report);
         $this->assertSame($exitCode, $report['exit_code']);
         $this->assertNotEmpty($report['results']);
+    }
+
+    public function test_the_crawler_registry_resolves_as_an_empty_singleton(): void
+    {
+        $registry = $this->app->make(CrawlerVerifierRegistry::class);
+
+        $this->assertSame($registry, $this->app->make(CrawlerVerifierRegistry::class));
+        // No bundled verifiers are registered yet, so every request stays
+        // `unknown` and installing this stage changes no behaviour.
+        $this->assertSame([], $registry->providers());
     }
 
     public function test_the_middleware_aliases_are_available(): void

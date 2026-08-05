@@ -89,6 +89,38 @@ final class CacheKeyFactory
     }
 
     /**
+     * Per-provider request counter for a verified crawler.
+     *
+     * Deliberately a different key space from publicRequests(): a crawler's
+     * traffic must not consume the budget of the humans sharing its address,
+     * and a crawler hitting its own ceiling must not push a visitor over the
+     * public one.
+     */
+    public function crawlerRequests(string $provider, string $normalizedIp): string
+    {
+        return $this->key('crawler-requests', $provider, self::hash($normalizedIp));
+    }
+
+    /**
+     * Published crawler ranges for one provider. The provider id is
+     * code-defined and identifier-shaped, so it appears unhashed for
+     * debuggability — unlike client addresses, it is not sensitive.
+     */
+    public function crawlerRanges(string $provider): string
+    {
+        return $this->key('crawler-ranges', $provider);
+    }
+
+    /**
+     * Staging slot for a refresh in progress. Written, read back, and only a
+     * byte-identical readback is promoted to the live key.
+     */
+    public function crawlerRangesStaging(string $provider): string
+    {
+        return $this->key('crawler-ranges-staging', $provider);
+    }
+
+    /**
      * A drained window held while its delivery job runs.
      *
      * A queue retry restores the job from its original payload, so anything the

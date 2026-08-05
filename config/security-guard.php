@@ -214,6 +214,58 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Search crawler range data
+    |--------------------------------------------------------------------------
+    |
+    | Published IP ranges of the known search crawlers, refreshed by
+    | `security-guard:crawler-ranges:refresh`. The package never schedules
+    | that command; register it in your own scheduler. Verification and the
+    | crawler rate limit build on this data in later config keys.
+    |
+    | Data is trusted for `fresh_for_hours`, then retained (visible to the
+    | doctor, trusted by nobody) for `retain_for_days`.
+    |
+    */
+
+    'crawler_access' => [
+        // Master switch. While false, no verifier is registered at all and
+        // every request classifies as `unknown` — identical to not having
+        // this feature.
+        'enabled' => false,
+
+        // Which bundled providers to verify. A provider switched off here is
+        // simply not recognised; its crawler is treated like any other client.
+        'verified_crawlers' => [
+            'google' => true,
+            'bing' => true,
+        ],
+
+        // Verified crawlers get their own budget, counted per provider and
+        // per address, in a key space the public limiter never touches.
+        //
+        // action: reject_only (429) | service_unavailable (503)
+        //
+        // permanent_block is not available here on purpose. A search crawler
+        // that trips a permanent block keeps receiving 403s until someone
+        // releases it, which degrades crawling, index refresh and search
+        // presence — much worse than the burst that caused it.
+        'rate_limit' => [
+            'requests_per_minute' => 300,
+            'action' => 'reject_only',
+        ],
+
+        'ranges' => [
+            'sources' => [
+                'google' => 'https://developers.google.com/static/crawling/ipranges/common-crawlers.json',
+                'bing' => 'https://www.bing.com/toolbox/bingbot.json',
+            ],
+            'fresh_for_hours' => 168,
+            'retain_for_days' => 30,
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | IP rule review thresholds
     |--------------------------------------------------------------------------
     |

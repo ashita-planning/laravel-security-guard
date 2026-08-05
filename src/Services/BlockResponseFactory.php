@@ -41,6 +41,20 @@ class BlockResponseFactory
         return new Response('Too Many Requests', Response::HTTP_TOO_MANY_REQUESTS, $headers);
     }
 
+    /**
+     * For crawler overload, where a host prefers 503 to 429.
+     *
+     * Retry-After is mandatory here rather than optional: telling a crawler
+     * to back off without saying for how long tells it nothing it can act on.
+     */
+    public function serviceUnavailable(int $retryAfter): Response
+    {
+        return new Response('Service Unavailable', Response::HTTP_SERVICE_UNAVAILABLE, [
+            'Content-Type' => 'text/plain; charset=UTF-8',
+            'Retry-After' => (string) max(1, $retryAfter),
+        ]);
+    }
+
     private function isValidStatus(int $status): bool
     {
         return $status >= 400 && $status <= 599;

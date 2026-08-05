@@ -6,10 +6,16 @@ namespace Apkk\LaravelSecurityGuard\Tests\Feature;
 
 use Apkk\LaravelSecurityGuard\Console\DoctorCommand;
 use Apkk\LaravelSecurityGuard\Contracts\AdminAllowedIpRepositoryContract;
+use Apkk\LaravelSecurityGuard\Contracts\CrawlerVerifierContract;
+use Apkk\LaravelSecurityGuard\Crawlers\CrawlerRangeStore;
+use Apkk\LaravelSecurityGuard\Crawlers\CrawlerVerifierRegistry;
 use Apkk\LaravelSecurityGuard\Data\AdminSubjectData;
+use Apkk\LaravelSecurityGuard\SecurityGuardServiceProvider;
+use Apkk\LaravelSecurityGuard\Support\CacheKeyFactory;
 use Apkk\LaravelSecurityGuard\Tests\TestCase;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 
 /**
@@ -33,6 +39,28 @@ class DoctorCommandTest extends TestCase
             'security-guard.cache.store' => 'database',
             'security-guard.cache.prefix' => 'acme-production',
         ]);
+    }
+
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+
+        parent::tearDown();
+    }
+
+    /**
+     * Store a validated range document the way the refresh command would.
+     *
+     * @param  array<int, string>  $v4
+     * @param  array<int, string>  $v6
+     */
+    private function seedRanges(string $provider, array $v4, array $v6 = []): void
+    {
+        $this->app->make(CrawlerRangeStore::class)->store($provider, [
+            'creation_time' => '2026-08-01T00:00:00Z',
+            'v4' => $v4,
+            'v6' => $v6,
+        ], "https://ranges.example.test/{$provider}.json", sha1($provider.serialize([$v4, $v6])));
     }
 
     /**
@@ -297,7 +325,7 @@ class DoctorCommandTest extends TestCase
     {
         $report = $this->runJson();
 
-        foreach (['admin_ip_allowlist', 'notifications', 'management_ui', 'submission_token'] as $name) {
+        foreach (['admin_ip_allowlist', 'notifications', 'management_ui', 'submission_token', 'crawler_access'] as $name) {
             $check = $this->check($report, $name);
 
             $this->assertSame('skipped', $check['state']);
@@ -353,5 +381,205 @@ class DoctorCommandTest extends TestCase
 
         $this->assertStringNotContainsString('base64:', $output);
         $this->assertStringNotContainsString((string) config('app.key'), $output);
+    }
+
+    // -----------------------------------------------------------------
+    // Verified crawler access
+    // -----------------------------------------------------------------
+
+    public function test_it_reports_crawler_access_with_no_providers(): void
+    {
+        config()->set('security-guard.crawler_access.enabled', true);
+        config()->set('security-guard.crawler_access.verified_crawlers', [
+            'google' => false,
+            'bing' => false,
+        ]);
+
+        $check = $this->check($this->runJson(), 'crawler_providers');
+
+        $this->assertSame('failure', $check['severity']);
+    }
+
+    public function test_it_requires_range_data_before_crawlers_can_verify(): void
+    {
+        config()->set('security-guard.crawler_access.enabled', true);
+
+        $report = $this->runJson();
+
+        foreach (['crawler_ranges.google', 'crawler_ranges.bing'] as $name) {
+            $check = $this->check($report, $name);
+
+            $this->assertSame('failure', $check['severity'], $name);
+            $this->assertStringContainsString('crawler-ranges:refresh', (string) $check['remedy']);
+        }
+    }
+
+    public function test_a_refreshed_crawler_installation_passes(): void
+    {
+        config()->set('security-guard.crawler_access.enabled', true);
+        $this->seedRanges('google', ['66.249.64.0/27'], ['2001:4860:4801:10::/64']);
+        $this->seedRanges('bing', ['157.55.39.0/24'], ['2620:1ec:c::/48']);
+
+        $report = $this->runJson();
+
+        $healthy = [
+            'crawler_providers',
+            'crawler_cache',
+            'crawler_ranges.google',
+            'crawler_ranges.bing',
+            'crawler_rate_limit',
+            'crawler_verification',
+        ];
+
+        foreach ($healthy as $name) {
+            $this->assertSame('ok', $this->check($report, $name)['severity'], $name);
+        }
+    }
+
+    public function test_it_reports_stale_crawler_ranges(): void
+    {
+        Carbon::setTestNow('2026-08-04 12:00:00');
+
+        config()->set('security-guard.crawler_access.enabled', true);
+        $this->seedRanges('google', ['66.249.64.0/27']);
+
+        // fresh_for_hours defaults to 168; a week and a second later the
+        // data is retained but no longer trusted.
+        Carbon::setTestNow('2026-08-11 12:00:01');
+
+        $check = $this->check($this->runJson(), 'crawler_ranges.google');
+
+        $this->assertSame('failure', $check['severity']);
+        $this->assertStringContainsString('freshness', $check['message']);
+        $this->assertArrayHasKey('fetched_at', $check['context']);
+    }
+
+    public function test_it_reports_corrupted_crawler_ranges(): void
+    {
+        config()->set('security-guard.crawler_access.enabled', true);
+
+        // Written straight to the cache: the refresh validates before storing,
+        // so a payload like this can only exist if the document was edited or
+        // damaged in the store.
+        $this->app->make(SecurityGuardServiceProvider::CACHE)->put(
+            $this->app->make(CacheKeyFactory::class)->crawlerRanges('google'),
+            [
+                'provider' => 'google',
+                'source' => 'https://ranges.example.test/google.json',
+                'fetched_at' => Carbon::now()->toIso8601String(),
+                'fresh_until' => Carbon::now()->addDays(7)->toIso8601String(),
+                'content_hash' => 'irrelevant',
+                'creation_time' => null,
+                'v4' => ['66.249.64.0/27', 'not-a-network'],
+                'v6' => [],
+            ],
+            3600,
+        );
+
+        $check = $this->check($this->runJson(), 'crawler_ranges.google');
+
+        $this->assertSame('failure', $check['severity']);
+        $this->assertStringContainsString('not-a-network', $check['context']['ranges']);
+    }
+
+    public function test_it_refuses_crawler_data_on_a_per_process_cache(): void
+    {
+        config()->set('security-guard.crawler_access.enabled', true);
+        config()->set('security-guard.cache.store', 'array');
+
+        $check = $this->check($this->runJson(), 'crawler_cache');
+
+        $this->assertSame('failure', $check['severity']);
+    }
+
+    public function test_it_refuses_a_crawler_action_that_would_persist_a_block(): void
+    {
+        config()->set('security-guard.crawler_access.enabled', true);
+        config()->set('security-guard.crawler_access.rate_limit.action', 'permanent_block');
+
+        $check = $this->check($this->runJson(), 'crawler_rate_limit');
+
+        $this->assertSame('failure', $check['severity']);
+        $this->assertStringContainsString('reject_only', $check['message']);
+    }
+
+    public function test_it_warns_when_the_crawler_limit_normalises_to_one(): void
+    {
+        config()->set('security-guard.crawler_access.enabled', true);
+        config()->set('security-guard.crawler_access.rate_limit.requests_per_minute', 0);
+
+        $check = $this->check($this->runJson(), 'crawler_rate_limit_threshold');
+
+        $this->assertSame('warning', $check['severity']);
+    }
+
+    public function test_it_reports_a_verifier_that_trusts_the_user_agent_alone(): void
+    {
+        config()->set('security-guard.crawler_access.enabled', true);
+
+        $this->app->make(CrawlerVerifierRegistry::class)->register(new class implements CrawlerVerifierContract
+        {
+            public function provider(): string
+            {
+                return 'homegrown';
+            }
+
+            public function claimsUserAgent(string $userAgent): bool
+            {
+                return str_contains($userAgent, 'HomegrownBot');
+            }
+
+            public function ownsAddress(string $normalizedIp): ?bool
+            {
+                // The anti-pattern under test: "the UA said so" as proof.
+                return true;
+            }
+        });
+
+        $check = $this->check($this->runJson(), 'crawler_verification');
+
+        $this->assertSame('failure', $check['severity']);
+        $this->assertStringContainsString('homegrown', $check['context']['providers']);
+    }
+
+    public function test_it_warns_when_ignore_rules_cover_crawler_ranges(): void
+    {
+        config()->set('security-guard.crawler_access.enabled', true);
+        config()->set('security-guard.permanent_block.ignored_ips', ['66.249.0.0/16']);
+        $this->seedRanges('google', ['66.249.64.0/27']);
+
+        $check = $this->check($this->runJson(), 'crawler_guard_exemption');
+
+        $this->assertSame('warning', $check['severity']);
+        $this->assertStringContainsString('66.249.0.0/16', $check['context']['rules']);
+    }
+
+    public function test_it_warns_about_a_missing_robots_txt(): void
+    {
+        config()->set('security-guard.crawler_access.enabled', true);
+
+        $check = $this->check($this->runJson(), 'crawler_robots_txt');
+
+        $this->assertSame('warning', $check['severity']);
+
+        // The remedy must keep the boundary honest: robots.txt steers
+        // crawlers, it does not protect anything.
+        $this->assertStringContainsString('not an access control', (string) $check['remedy']);
+    }
+
+    public function test_a_present_robots_txt_passes(): void
+    {
+        config()->set('security-guard.crawler_access.enabled', true);
+
+        $path = $this->app->publicPath('robots.txt');
+        file_put_contents($path, "User-agent: *\nDisallow:\n");
+
+        try {
+            $check = $this->check($this->runJson(), 'crawler_robots_txt');
+
+            $this->assertSame('ok', $check['severity']);
+        } finally {
+            @unlink($path);
+        }
     }
 }

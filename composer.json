@@ -68,5 +68,8 @@
         "sort-packages": true
     },
     "minimum-stability": "stable",
-    "prefer-stable": true
+    "prefer-stable": true,
+    "suggest": {
+        "guzzlehttp/guzzle": "Required by security-guard:crawler-ranges:refresh to fetch published crawler IP ranges (^7.8). Already present in any full Laravel application."
+    }
 }
