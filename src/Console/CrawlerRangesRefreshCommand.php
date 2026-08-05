@@ -9,6 +9,7 @@ use Apkk\LaravelSecurityGuard\Crawlers\CrawlerRangeParser;
 use Apkk\LaravelSecurityGuard\Crawlers\CrawlerRangeStore;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
+use Illuminate\Http\Client\RequestException;
 use Throwable;
 
 /**
@@ -60,18 +61,40 @@ class CrawlerRangesRefreshCommand extends Command
             } catch (Throwable $exception) {
                 $failed[] = $provider;
 
-                // The message may carry the URL (config-owned) but the
-                // document body never reaches it: parser reasons are fixed
-                // strings, and transport errors are truncated.
                 $this->components->error(sprintf(
                     '%s: refresh failed — %s. The previously stored data was kept.',
                     $provider,
-                    mb_strimwidth($exception->getMessage(), 0, 200, '…'),
+                    $this->describeFailure($exception),
                 ));
             }
         }
 
         return $failed === [] ? self::SUCCESS : self::FAILURE;
+    }
+
+    /**
+     * Reduce a failure to something safe to print and to ship to a log.
+     *
+     * A non-2xx answer is the case that matters. Laravel's RequestException
+     * embeds the start of the response body in its message, so an error page
+     * — or whatever an intercepting proxy, a hijacked CDN or a captive portal
+     * chose to return — would otherwise land in the operator's terminal and
+     * in whatever aggregates cron output. The status code says everything
+     * this command's reader needs; the body says nothing they should trust.
+     *
+     * Every other failure already carries a message that quotes nothing
+     * remote: a connection error is local transport diagnostics (DNS, TLS,
+     * timeout) with no response in existence yet, the parser's rejection
+     * reasons are fixed strings, and the store reports its own write
+     * failures.
+     */
+    private function describeFailure(Throwable $exception): string
+    {
+        if ($exception instanceof RequestException) {
+            return 'the provider answered HTTP '.$exception->response->status();
+        }
+
+        return mb_strimwidth($exception->getMessage(), 0, 200, '…');
     }
 
     /**

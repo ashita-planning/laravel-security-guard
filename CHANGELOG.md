@@ -66,6 +66,13 @@ Nothing yet.
   - README: the three-way classification, refresh scheduling, freshness
     semantics, why permanent blocks are refused for crawlers, and the
     `robots.txt` boundary.
+  - `security-guard:crawler-ranges:refresh` reports a non-2xx answer as its
+    status code alone. Laravel's `RequestException` embeds the start of the
+    response body in its message, so printing it verbatim would put an error
+    page — or whatever an intercepting proxy or hijacked CDN chose to return
+    — into the operator's terminal and into whatever aggregates cron output.
+    Connection errors, parser rejections and store failures already carry
+    messages that quote nothing remote.
 
 ### Upgrading from 0.2.x
 

@@ -10,7 +10,10 @@ use Apkk\LaravelSecurityGuard\SecurityGuardServiceProvider;
 use Apkk\LaravelSecurityGuard\Support\CacheKeyFactory;
 use Apkk\LaravelSecurityGuard\Tests\Fixtures\FakeCrawlerRangeFetcher;
 use Apkk\LaravelSecurityGuard\Tests\TestCase;
+use GuzzleHttp\Psr7\Response as GuzzleResponse;
 use Illuminate\Contracts\Config\Repository;
+use Illuminate\Http\Client\RequestException;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Carbon;
 use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
@@ -208,6 +211,28 @@ class CrawlerRangeRefreshTest extends TestCase
         // The other provider still refreshed; one broken endpoint does not
         // abort the run.
         $this->assertNotNull($this->store()->current('bing'));
+    }
+
+    public function test_a_non_2xx_answer_is_reported_without_quoting_its_body(): void
+    {
+        // Laravel's RequestException embeds the start of the response body in
+        // its message. Printing that verbatim puts an error page — or
+        // whatever an intercepting proxy or hijacked CDN returned — into the
+        // operator's terminal and into whatever aggregates cron output. The
+        // status code is the whole of what a reader needs here.
+        $body = '<!doctype html><html><head><title>Not Found</title></head>'
+            .'<body>SENTINEL-FROM-REMOTE-BODY</body></html>';
+
+        $this->fetcher->respond(
+            'https://ranges.example.test/google.json',
+            new RequestException(new Response(new GuzzleResponse(404, [], $body))),
+        );
+
+        $this->artisan('security-guard:crawler-ranges:refresh')
+            ->expectsOutputToContain('the provider answered HTTP 404')
+            ->doesntExpectOutputToContain('SENTINEL-FROM-REMOTE-BODY')
+            ->doesntExpectOutputToContain('<!doctype html>')
+            ->assertExitCode(1);
     }
 
     public function test_an_oversized_document_is_rejected(): void
