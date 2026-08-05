@@ -48,7 +48,7 @@ migrationはパッケージから自動読み込みされるため、テーブ�
 | Security Event Notification | 無効 | 遮断イベントの非同期通知、集約、日次上限 |
 | Error Notification Guard | 無効 | ホスト側エラーイベントの集約、無害化、送信制限 |
 | Management UI | 無効 | 標準の遮断一覧・解除画面 |
-| Verified Crawler Access | 無効 | 正規検索クローラーの真正性検証と専用レート制限（開発中） |
+| Verified Crawler Access | 無効 | 正規検索クローラーの真正性検証と専用レート制限 |
 
 ## 段階的な導入手順
 
@@ -84,12 +84,18 @@ use Apkk\LaravelSecurityGuard\Http\Middleware\GuardPublicRequests;
 
 ### 評価順序
 
-1. 除外パス判定
+1. `security-guard.enabled` の確認
 2. クライアントIP解決・正規化
 3. ignored IP判定
-4. 既存の永続遮断判定
+4. 既存の永続遮断判定（`permanent_block.excluded_paths` を尊重）
 5. 既知攻撃パス判定
-6. 公開レート制限判定
+6. レート制限除外パス判定（`public_rate_limit.excluded_paths`。両レート制限を迂回し、4・5は迂回しない）
+7. `crawler_access.enabled` の確認
+8. User-Agentによる候補抽出とIP真正性検証
+9. 正規確認済みbot → 専用レート制限（`CrawlerRateLimiter`）
+10. 未確認・その他 → 通常の公開レート制限（`PublicRateLimiter`）
+
+正規確認済みbotが差し替えるのは**レート制限だけ**です。3〜5の防御は分類より先に評価されるため、検証が遮断や攻撃パス検知の言い訳になることはありません。
 
 ### reverse proxy配下での注意
 
@@ -153,7 +159,7 @@ regexは設定者が追加できるため、ReDoSを避ける観点でレビュ�
 
 ## 正規検索クローラーの検証
 
-> **開発中の機能です（v0.3.0予定）。** 範囲データの取得・真正性検証・専用レート制限サービス・doctor検査までが実装済みで、`GuardPublicRequests`の評価順序への組み込みはまだ行われていません。`crawler_access`を有効にしても、現時点で公開リクエストの挙動は変わりません。
+`crawler_access.enabled` を `true` にすると機能します。公開レート制限とは独立しており、`public_rate_limit.enabled=false` のままでも正規確認済みbotには専用レート制限が適用されます。外部通信（公式IP一覧の取得）を行うのは `security-guard:crawler-ranges:refresh` コマンドだけで、リクエスト処理中は事前取得済みキャッシュのみを参照します。
 
 クロール頻度の高い正規検索bot（Googlebot / Bingbot）が公開レート制限の上限を超えると、既定の`permanent_block`で永続遮断され、解除されるまで403が返り続けます。クロール、インデックス更新、検索表示の維持への影響は、上限超過の原因となったバーストよりはるかに深刻です。このモジュールは正規botを検証したうえで専用のレート制限へ分離し、**正規botを永続遮断だけは決してしない**ための仕組みです。
 
@@ -224,6 +230,10 @@ Schedule::command('security-guard:crawler-ranges:refresh')->daily();
 正規確認済みbotが上限を超えた場合は`429`または`503`を返します。応答には常に`Retry-After`が付きます — 戻るべき間隔を伝えないbackoff指示はbotにとって何の情報でもないためです。
 
 `action`に`permanent_block`は指定できません。設定しても`reject_only`で動作し、doctorがfailureを報告します。黙って従えばサイトが検索から消え、黙って直せば誤設定が隠れるため、「動作は安全側へ補正し、doctorで可視化する」という分担です。
+
+上限超過しても遮断DBに行は作られず、遮断通知も送られません。拒否は拒否であり、それ以上の状態を残しません。
+
+**検証済み判定の後に専用リミッター自体が障害を起こした場合は、fail openで通過させます。** 通常レート制限へ戻すことはしません — 戻した先の既定`action`は`permanent_block`であり、カウンターの障害を理由に正規botを永続遮断するのは、このモジュールが防ごうとしている結果そのものだからです。カウントされないリクエストの方が安い失敗です。
 
 ### 正規botでも防御は迂回しません
 
@@ -592,6 +602,8 @@ php artisan security-guard:crawler-ranges:refresh --provider=google
 | 通知dispatch・送信失敗 | 遮断は維持 | 防御と通知の分離 |
 | 日次上限lock失敗 | 通知しない | 通知洪水防止 |
 | 管理IP DB判定失敗 | deny | 管理領域を安全側へ |
+| crawler検証処理の失敗 | 通常の公開ポリシーを適用し警告 | 検証障害でアクセスを広げない |
+| verified後のcrawler limiter失敗 | 通過し警告（fail open） | 通常制限へ戻すと既定の`permanent_block`が正規botを永続遮断し得るため |
 | 無効regex | 該当regexを無視し警告 | 全リクエスト500の回避 |
 
 方針は機能ごとに固定です。全体を一括で切り替える設定は提供しません。

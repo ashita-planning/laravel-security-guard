@@ -13,11 +13,21 @@ migration note.
 
 ### Added
 
-- **Verified search crawler groundwork** (#14, toward v0.3.0). Everything
-  below ships dark: `crawler_access.enabled` defaults to `false`, and even
-  when enabled the public middleware does not consult any of it yet, so
-  request behaviour is unchanged. The integration into `GuardPublicRequests`
-  lands separately.
+- **Verified search crawler handling** (#14, toward v0.3.0). Off by default
+  (`crawler_access.enabled` is `false`, and while it is, the middleware never
+  consults a verifier — v0.2.0 behaviour exactly). When enabled it works
+  independently of the public rate limit: verified crawlers get their own
+  budget even with `public_rate_limit.enabled=false`.
+  - `GuardPublicRequests` classifies after the ignore list, existing blocks
+    and attack-path detection — verification swaps the rate limit, never the
+    defences — and after the rate-limit exclusion list, which now excuses
+    both limiters at once. A verified crawler goes to `CrawlerRateLimiter`;
+    `unverified` and `unknown` go to the public limiter as before. A
+    classification failure logs once (provider, exception class, stage — no
+    User-Agent, no URL) and applies the normal public policy; a crawler
+    limiter failure after verification fails open and does not fall back to
+    the public limiter, whose default `permanent_block` would otherwise
+    punish a genuine crawler for our broken counter.
   - `CrawlerVerifierContract` and `CrawlerVerificationResult`: requests
     classify as *verified*, *claimed-but-unverified* or *unknown*. The
     User-Agent only nominates a candidate; verification happens exclusively
