@@ -312,6 +312,39 @@ class CrawlerGuardIntegrationTest extends TestCase
         $this->fromIp(self::GOOGLE_IP)->get('/', ['User-Agent' => self::GOOGLEBOT_UA])->assertStatus(429);
     }
 
+    public function test_an_ipv6_crawler_address_verifies_through_the_middleware(): void
+    {
+        // Inside the seeded google v6 range 2001:4860:4801:10::/64. The full
+        // pipeline — resolver normalization, family-scoped verification, the
+        // dedicated budget and its rejection — must hold for IPv6 exactly as
+        // it does for IPv4.
+        $this->seedBothProviders();
+
+        $this->fromIp('2001:4860:4801:10::5')->get('/', ['User-Agent' => self::GOOGLEBOT_UA])->assertOk();
+        $this->fromIp('2001:4860:4801:10::5')->get('/', ['User-Agent' => self::GOOGLEBOT_UA])->assertOk();
+
+        $response = $this->fromIp('2001:4860:4801:10::5')->get('/', ['User-Agent' => self::GOOGLEBOT_UA]);
+
+        $response->assertStatus(429);
+        $this->assertGreaterThanOrEqual(1, (int) $response->headers->get('Retry-After'));
+
+        $this->assertSame(3, $this->crawlerAttempts(CrawlerProvider::GOOGLE, '2001:4860:4801:10::5'));
+        $this->assertDatabaseCount('security_guard_blocked_ips', 0);
+    }
+
+    public function test_an_ipv6_address_outside_the_ranges_stays_on_the_public_policy(): void
+    {
+        $this->seedBothProviders();
+        config()->set('security-guard.public_rate_limit.enabled', true);
+        config()->set('security-guard.public_rate_limit.requests_per_minute', 100);
+
+        // A Googlebot UA from documentation space: unverified, normal policy.
+        $this->fromIp('2001:db8::1')->get('/', ['User-Agent' => self::GOOGLEBOT_UA])->assertOk();
+
+        $this->assertSame(0, $this->crawlerAttempts(CrawlerProvider::GOOGLE, '2001:db8::1'));
+        $this->assertSame(1, $this->publicAttempts('2001:db8::1'));
+    }
+
     // -----------------------------------------------------------------
     // Unverified and unknown requests
     // -----------------------------------------------------------------
