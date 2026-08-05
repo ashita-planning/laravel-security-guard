@@ -20,9 +20,11 @@ use Apkk\LaravelSecurityGuard\Contracts\ClientIpResolverContract;
 use Apkk\LaravelSecurityGuard\Contracts\CrawlerRangeFetcherContract;
 use Apkk\LaravelSecurityGuard\Contracts\IpMatcherContract;
 use Apkk\LaravelSecurityGuard\Contracts\SecurityEventDispatcherContract;
+use Apkk\LaravelSecurityGuard\Crawlers\CrawlerProvider;
 use Apkk\LaravelSecurityGuard\Crawlers\CrawlerRangeStore;
 use Apkk\LaravelSecurityGuard\Crawlers\CrawlerVerifierRegistry;
 use Apkk\LaravelSecurityGuard\Crawlers\HttpCrawlerRangeFetcher;
+use Apkk\LaravelSecurityGuard\Crawlers\PublishedRangeCrawlerVerifier;
 use Apkk\LaravelSecurityGuard\Http\Middleware\EnsureAdminIpIsAllowed;
 use Apkk\LaravelSecurityGuard\Http\Middleware\GuardPublicRequests;
 use Apkk\LaravelSecurityGuard\Notifications\LogErrorEventNotifier;
@@ -244,11 +246,28 @@ class SecurityGuardServiceProvider extends ServiceProvider
             $app->make(FailureLogger::class),
         ));
 
-        // Empty until the bundled verifiers land: with none registered, every
-        // request classifies as `unknown`, so resolving this changes nothing.
-        $this->app->singleton(CrawlerVerifierRegistry::class, fn ($app): CrawlerVerifierRegistry => new CrawlerVerifierRegistry(
-            $app->make(FailureLogger::class),
-        ));
+        $this->app->singleton(CrawlerVerifierRegistry::class, function ($app): CrawlerVerifierRegistry {
+            $registry = new CrawlerVerifierRegistry($app->make(FailureLogger::class));
+            $config = $app->make(ConfigRepository::class);
+
+            // While crawler_access is off, nothing is registered and every
+            // request classifies as `unknown` — identical to not having the
+            // feature at all.
+            if (! $config->get('security-guard.crawler_access.enabled', false)) {
+                return $registry;
+            }
+
+            foreach (CrawlerProvider::bundled() as $provider) {
+                if ($config->get("security-guard.crawler_access.verified_crawlers.{$provider}", true)) {
+                    $registry->register(new PublishedRangeCrawlerVerifier(
+                        $provider,
+                        $app->make(CrawlerRangeStore::class),
+                    ));
+                }
+            }
+
+            return $registry;
+        });
 
         $this->app->singleton(AdminIpAccessService::class);
         $this->app->singleton(BlockResponseFactory::class);

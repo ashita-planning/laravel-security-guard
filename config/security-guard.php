@@ -228,6 +228,18 @@ return [
     */
 
     'crawler_access' => [
+        // Master switch. While false, no verifier is registered at all and
+        // every request classifies as `unknown` — identical to not having
+        // this feature.
+        'enabled' => false,
+
+        // Which bundled providers to verify. A provider switched off here is
+        // simply not recognised; its crawler is treated like any other client.
+        'verified_crawlers' => [
+            'google' => true,
+            'bing' => true,
+        ],
+
         'ranges' => [
             'sources' => [
                 'google' => 'https://developers.google.com/static/search/apis/ipranges/googlebot.json',
