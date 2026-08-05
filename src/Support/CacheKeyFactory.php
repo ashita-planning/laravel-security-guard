@@ -89,6 +89,19 @@ final class CacheKeyFactory
     }
 
     /**
+     * Per-provider request counter for a verified crawler.
+     *
+     * Deliberately a different key space from publicRequests(): a crawler's
+     * traffic must not consume the budget of the humans sharing its address,
+     * and a crawler hitting its own ceiling must not push a visitor over the
+     * public one.
+     */
+    public function crawlerRequests(string $provider, string $normalizedIp): string
+    {
+        return $this->key('crawler-requests', $provider, self::hash($normalizedIp));
+    }
+
+    /**
      * Published crawler ranges for one provider. The provider id is
      * code-defined and identifier-shaped, so it appears unhashed for
      * debuggability — unlike client addresses, it is not sensitive.

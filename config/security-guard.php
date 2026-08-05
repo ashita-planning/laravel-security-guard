@@ -240,6 +240,20 @@ return [
             'bing' => true,
         ],
 
+        // Verified crawlers get their own budget, counted per provider and
+        // per address, in a key space the public limiter never touches.
+        //
+        // action: reject_only (429) | service_unavailable (503)
+        //
+        // permanent_block is not available here on purpose. A search crawler
+        // that trips a permanent block keeps receiving 403s until someone
+        // releases it, which degrades crawling, index refresh and search
+        // presence — much worse than the burst that caused it.
+        'rate_limit' => [
+            'requests_per_minute' => 300,
+            'action' => 'reject_only',
+        ],
+
         'ranges' => [
             'sources' => [
                 'google' => 'https://developers.google.com/static/search/apis/ipranges/googlebot.json',

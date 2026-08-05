@@ -41,6 +41,7 @@ use Apkk\LaravelSecurityGuard\Services\CidrIpMatcher;
 use Apkk\LaravelSecurityGuard\Services\ConfigAdminSubjectResolver;
 use Apkk\LaravelSecurityGuard\Services\ConfigAttackPathMatcher;
 use Apkk\LaravelSecurityGuard\Services\ConfigurationDoctor;
+use Apkk\LaravelSecurityGuard\Services\CrawlerRateLimiter;
 use Apkk\LaravelSecurityGuard\Services\DailyLimiter;
 use Apkk\LaravelSecurityGuard\Services\ErrorNotificationGuard;
 use Apkk\LaravelSecurityGuard\Services\IpBlockService;
@@ -174,6 +175,12 @@ class SecurityGuardServiceProvider extends ServiceProvider
 
         $this->app->singleton(PublicRateLimiter::class, fn ($app): PublicRateLimiter => new PublicRateLimiter(
             $app->make(IpBlockService::class),
+            $app->make(self::RATE_LIMITER),
+            $app->make(CacheKeyFactory::class),
+            $app->make(ConfigRepository::class),
+        ));
+
+        $this->app->singleton(CrawlerRateLimiter::class, fn ($app): CrawlerRateLimiter => new CrawlerRateLimiter(
             $app->make(self::RATE_LIMITER),
             $app->make(CacheKeyFactory::class),
             $app->make(ConfigRepository::class),
