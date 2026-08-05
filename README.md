@@ -48,6 +48,7 @@ migrationはパッケージから自動読み込みされるため、テーブ�
 | Security Event Notification | 無効 | 遮断イベントの非同期通知、集約、日次上限 |
 | Error Notification Guard | 無効 | ホスト側エラーイベントの集約、無害化、送信制限 |
 | Management UI | 無効 | 標準の遮断一覧・解除画面 |
+| Verified Crawler Access | 無効 | 正規検索クローラーの真正性検証と専用レート制限（開発中） |
 
 ## 段階的な導入手順
 
@@ -58,11 +59,12 @@ migrationはパッケージから自動読み込みされるため、テーブ�
 5. stagingで遮断、継続、解除、再遮断を確認する
 6. 公開レート制限をstagingで有効化する
 7. webhook、認証callback、管理画面などを`excluded_paths`へ登録する
-8. 管理者許可IPをCLIで登録してから管理IP制限を有効化する
-9. センシティブルルートへprofileを個別適用する
-10. queue workerと送信上限を確認してから通知を有効化する
-11. 各段階の前後で`php artisan security-guard:doctor --strict`を実行する
-12. 本番では低リスクな時間帯に適用し、403・429件数とアプリケーションエラーを監視する
+8. `crawler_access`を使う場合は`security-guard:crawler-ranges:refresh`をスケジューラーへ登録し、初回実行してから有効化する
+9. 管理者許可IPをCLIで登録してから管理IP制限を有効化する
+10. センシティブルルートへprofileを個別適用する
+11. queue workerと送信上限を確認してから通知を有効化する
+12. 各段階の前後で`php artisan security-guard:doctor --strict`を実行する
+13. 本番では低リスクな時間帯に適用し、403・429件数とアプリケーションエラーを監視する
 
 ## 公開リクエストの保護
 
@@ -148,6 +150,90 @@ regexは設定者が追加できるため、ReDoSを避ける観点でレビュ�
     'excluded_paths' => [],
 ],
 ```
+
+## 正規検索クローラーの検証
+
+> **開発中の機能です（v0.3.0予定）。** 範囲データの取得・真正性検証・専用レート制限サービス・doctor検査までが実装済みで、`GuardPublicRequests`の評価順序への組み込みはまだ行われていません。`crawler_access`を有効にしても、現時点で公開リクエストの挙動は変わりません。
+
+クロール頻度の高い正規検索bot（Googlebot / Bingbot）が公開レート制限の上限を超えると、既定の`permanent_block`で永続遮断され、解除されるまで403が返り続けます。クロール、インデックス更新、検索表示の維持への影響は、上限超過の原因となったバーストよりはるかに深刻です。このモジュールは正規botを検証したうえで専用のレート制限へ分離し、**正規botを永続遮断だけは決してしない**ための仕組みです。
+
+### リクエストは3分類されます
+
+| 分類 | 条件 | 扱い |
+| --- | --- | --- |
+| 正規確認済み | UAが候補で、送信元IPが公式公開範囲内 | 専用レート制限 |
+| 未確認 | UAは候補だが、送信元を確認できない | 通常の公開ポリシー |
+| その他 | 上記以外すべて | 通常の公開ポリシー |
+
+**User-Agentだけでは許可しません。** GoogleもBingもUAは偽装可能と明記しています。UAは候補の抽出だけに使い、判定は各社が公開するIP範囲（CIDR）とキャッシュ済みデータの照合のみで行います。リクエスト処理中のDNS問い合わせ・外部取得はありません。
+
+未確認を「偽装」と断定することもしません。DNS障害、範囲データの期限切れ、キャッシュ障害でも未確認になるため、未確認を理由とする即時永続遮断は行わず、通常の公開ポリシーへ戻すだけです。逆方向も同じで、検証系の障害が「Googlebotを名乗るから通す」に倒れることはありません。
+
+### 範囲データの取得
+
+検証は事前取得したデータからのみ行うため、公式IP一覧を定期的に更新します。
+
+```bash
+php artisan security-guard:crawler-ranges:refresh
+```
+
+パッケージはこのコマンドを**自動でスケジュール登録しません**。更新の要否と頻度はホスト側の判断として、ホストのスケジューラーへ明示的に登録してください。
+
+```php
+Schedule::command('security-guard:crawler-ranges:refresh')->daily();
+```
+
+- 取得したドキュメントは全件検証してから保存します。1件でも解析できない場合はドキュメント全体を拒否し、前回の正常データを保持します
+- 保存はstagingキーへの書き込み・読み戻し・一致確認を経てから本番キーへ昇格するため、壊れたレスポンスや不安定なcacheが既存データを上書きすることはありません
+- データは`fresh_for_hours`の間だけ検証に使われ、その後`retain_for_days`の間は保持されます（doctorが「3週間前のデータ」と「データなし」を区別できるようにするため）。**期限切れデータは誰も検証しません** — 検証系の障害はアクセスを広げる方向に倒れません
+- 取得失敗はproviderごとに独立で、失敗したproviderは前回データを保持したまま終了コードが非ゼロになります
+
+### 設定
+
+```php
+'crawler_access' => [
+    'enabled' => false,
+
+    'verified_crawlers' => [
+        'google' => true,
+        'bing' => true,
+    ],
+
+    // 正規確認済みbot専用の上限。カウンターはprovider×IP単位で、
+    // 一般利用者の公開カウンターとは共有しません
+    'rate_limit' => [
+        'requests_per_minute' => 300,
+        'action' => 'reject_only', // reject_only (429) | service_unavailable (503)
+    ],
+
+    'ranges' => [
+        'sources' => [
+            'google' => 'https://developers.google.com/static/search/apis/ipranges/googlebot.json',
+            'bing' => 'https://www.bing.com/toolbox/bingbot.json',
+        ],
+        'fresh_for_hours' => 168,
+        'retain_for_days' => 30,
+    ],
+],
+```
+
+独自providerは`CrawlerVerifierContract`を実装し、`CrawlerVerifierRegistry`へ登録すると追加できます。
+
+### 上限超過時も永続遮断しません
+
+正規確認済みbotが上限を超えた場合は`429`または`503`を返します。応答には常に`Retry-After`が付きます — 戻るべき間隔を伝えないbackoff指示はbotにとって何の情報でもないためです。
+
+`action`に`permanent_block`は指定できません。設定しても`reject_only`で動作し、doctorがfailureを報告します。黙って従えばサイトが検索から消え、黙って直せば誤設定が隠れるため、「動作は安全側へ補正し、doctorで可視化する」という分担です。
+
+### 正規botでも防御は迂回しません
+
+変更されるのは公開レート制限だけです。既存の永続遮断、既知攻撃パス検知、ignored IP判定、不正リクエストへの固定レスポンスは、正規確認済みbotにも通常どおり適用されます。
+
+公式範囲を`permanent_block.ignored_ips`へ貼る必要はありません。ignored IPはレート制限だけでなく攻撃パス検知と遮断まで免除してしまうため、公開範囲と重なるルールがあるとdoctorが警告します。
+
+### robots.txt
+
+`robots.txt`はホストアプリケーションの責務で、パッケージは生成も変更もしません。クロールトラフィックを誘導する手段であり、**アクセス制御やセキュリティ境界ではありません** — すべてのbotがルールに従うわけではないため、管理画面や認証領域の保護はmiddlewareで行ってください。doctorは`crawler_access`有効時に存在だけを任意検査します（無ければwarning）。
 
 ## 管理領域IP許可リスト
 
@@ -377,6 +463,7 @@ php artisan security-guard:doctor
 | 通知 | channelの解決可否、mail宛先、日次上限、queue接続 |
 | 管理UI | 認証・認可middlewareが両方あるか |
 | ワンタイムトークン | 共有cacheを使っているか |
+| 正規クローラー | provider登録の有無、範囲データの有無・整合性・鮮度、共有cacheか、`action`が遮断を永続化しないか、UAだけで検証するverifierの検出、公式範囲とignored IPの重複、`robots.txt`の有無 |
 
 ### CI・デプロイでの利用
 
@@ -485,6 +572,10 @@ php artisan security-guard:admin-ip:list 1234 --type=admin
 
 ```bash
 php artisan security-guard:admin-ip:revoke 1234 203.0.113.10 --type=admin
+```
+
+```bash
+php artisan security-guard:crawler-ranges:refresh --provider=google
 ```
 
 対話待ちはありません。無効なIPは非ゼロ終了コードとなり、DBへ書き込みません。

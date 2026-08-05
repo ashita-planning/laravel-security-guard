@@ -7,6 +7,8 @@ namespace Apkk\LaravelSecurityGuard\Services;
 use Apkk\LaravelSecurityGuard\Contracts\AttackPathMatcherContract;
 use Apkk\LaravelSecurityGuard\Contracts\ClientIpResolverContract;
 use Apkk\LaravelSecurityGuard\Contracts\IpMatcherContract;
+use Apkk\LaravelSecurityGuard\Crawlers\CrawlerRangeStore;
+use Apkk\LaravelSecurityGuard\Crawlers\CrawlerVerifierRegistry;
 use Apkk\LaravelSecurityGuard\Data\DiagnosticResult;
 use Apkk\LaravelSecurityGuard\Models\AdminAllowedIp;
 use Apkk\LaravelSecurityGuard\Notifications\NotifierRegistry;
@@ -46,6 +48,9 @@ class ConfigurationDoctor
         private readonly AttackPathMatcherContract $attackPathMatcher,
         private readonly NotifierRegistry $notifiers,
         private readonly IpMatcherContract $ipMatcher,
+        private readonly CrawlerRangeStore $crawlerRanges,
+        private readonly CrawlerVerifierRegistry $crawlerVerifiers,
+        private readonly CrawlerRateLimiter $crawlerRateLimiter,
     ) {}
 
     /**
@@ -64,6 +69,7 @@ class ConfigurationDoctor
             $this->checkNotifications(),
             $this->checkManagementUi(),
             $this->checkSubmissionToken(),
+            $this->checkCrawlerAccess(),
             $this->checkIpRules(),
         );
     }
@@ -415,11 +421,7 @@ class ConfigurationDoctor
      */
     private function checkCache(): array
     {
-        $storeName = $this->config->get('security-guard.cache.store');
-        $storeName = is_string($storeName) && $storeName !== ''
-            ? $storeName
-            : (string) $this->config->get('cache.default');
-        $driver = (string) $this->config->get("cache.stores.{$storeName}.driver", $storeName);
+        [$storeName, $driver] = $this->configuredCacheDriver();
 
         $results = [$this->checkCacheSharing($storeName, $driver)];
 
@@ -907,11 +909,7 @@ class ConfigurationDoctor
             return [DiagnosticResult::skipped('submission_token', 'One-time submission tokens are disabled.')];
         }
 
-        $storeName = $this->config->get('security-guard.cache.store');
-        $storeName = is_string($storeName) && $storeName !== ''
-            ? $storeName
-            : (string) $this->config->get('cache.default');
-        $driver = (string) $this->config->get("cache.stores.{$storeName}.driver", $storeName);
+        [, $driver] = $this->configuredCacheDriver();
 
         if (in_array($driver, ['array', 'null'], true)) {
             return [DiagnosticResult::failure(
@@ -934,5 +932,351 @@ class ConfigurationDoctor
         return [DiagnosticResult::ok('submission_token', "Submission tokens use the shared {$driver} store.", [
             'driver' => $driver,
         ])];
+    }
+
+    /**
+     * @return array<int, DiagnosticResult>
+     */
+    private function checkCrawlerAccess(): array
+    {
+        if (! (bool) $this->config->get('security-guard.crawler_access.enabled', false)) {
+            return [DiagnosticResult::skipped('crawler_access', 'Verified crawler handling is disabled.')];
+        }
+
+        return array_merge(
+            [$this->checkCrawlerProviders()],
+            [$this->checkCrawlerCache()],
+            $this->checkCrawlerRanges(),
+            $this->checkCrawlerRateLimit(),
+            [$this->checkCrawlerVerificationTrust()],
+            $this->checkCrawlerGuardExemption(),
+            [$this->checkRobotsTxt()],
+        );
+    }
+
+    private function checkCrawlerProviders(): DiagnosticResult
+    {
+        $providers = $this->crawlerVerifiers->providers();
+
+        if ($providers === []) {
+            return DiagnosticResult::failure(
+                'crawler_providers',
+                'Crawler access is enabled, but no provider is registered.',
+                'Enable at least one entry under crawler_access.verified_crawlers, or register your own verifier. As configured nothing ever verifies, and every crawler stays on the public policy this module was meant to take it off.',
+            );
+        }
+
+        return DiagnosticResult::ok(
+            'crawler_providers',
+            count($providers).' crawler provider(s) registered: '.implode(', ', $providers).'.',
+            ['providers' => implode(', ', $providers)],
+        );
+    }
+
+    private function checkCrawlerCache(): DiagnosticResult
+    {
+        [$storeName, $driver] = $this->configuredCacheDriver();
+
+        if (in_array($driver, ['array', 'null'], true)) {
+            return DiagnosticResult::failure(
+                'crawler_cache',
+                "Crawler range data is kept in the {$driver} store, which keeps no state between requests.",
+                'Point security-guard.cache.store at a shared store. Ranges written by crawler-ranges:refresh die with the process that fetched them, so no crawler ever verifies.',
+                ['store' => $storeName, 'driver' => $driver],
+            );
+        }
+
+        if ($driver === 'file') {
+            return DiagnosticResult::warning(
+                'crawler_cache',
+                'Crawler range data lives in a node-local file cache.',
+                'Fine on a single server. On multiple nodes the refresh has to run on every node, and each node counts crawler requests on its own.',
+                ['store' => $storeName, 'driver' => $driver],
+            );
+        }
+
+        return DiagnosticResult::ok('crawler_cache', "Crawler range data uses the shared {$driver} store.", [
+            'store' => $storeName,
+            'driver' => $driver,
+        ]);
+    }
+
+    /**
+     * @return array<int, DiagnosticResult>
+     */
+    private function checkCrawlerRanges(): array
+    {
+        return array_map(
+            fn (string $provider): DiagnosticResult => $this->inspectCrawlerRanges($provider),
+            $this->crawlerVerifiers->providers(),
+        );
+    }
+
+    /**
+     * One provider's stored range document: present, intact, and fresh.
+     *
+     * All three failure modes end the same way at runtime — the provider
+     * verifies nobody and its crawler silently falls back to the public
+     * policy — but they are distinct problems: "never fetched" needs the
+     * command run once, "stale" needs it scheduled, "corrupt" means the
+     * cached document was edited or damaged, which the refresh would never
+     * store.
+     */
+    private function inspectCrawlerRanges(string $provider): DiagnosticResult
+    {
+        $name = "crawler_ranges.{$provider}";
+        $stored = $this->crawlerRanges->current($provider);
+
+        if ($stored === null) {
+            return DiagnosticResult::failure(
+                $name,
+                "No published ranges are stored for {$provider}.",
+                'Run `php artisan security-guard:crawler-ranges:refresh` and schedule it. Until ranges exist this provider verifies nobody, and its crawler is treated like any other client.',
+            );
+        }
+
+        $entries = array_merge($stored['v4'], $stored['v6']);
+
+        if ($entries === []) {
+            return DiagnosticResult::failure(
+                $name,
+                "The stored range document for {$provider} is empty.",
+                'Re-run `php artisan security-guard:crawler-ranges:refresh`. The refresh never stores an empty document, so this one did not come from it intact.',
+            );
+        }
+
+        $invalid = array_values(array_filter($entries, static function (string $entry): bool {
+            $range = IpRange::parse($entry);
+
+            return $range === null || ! $range->wasCanonical();
+        }));
+
+        if ($invalid !== []) {
+            return DiagnosticResult::failure(
+                $name,
+                count($invalid).' of '.count($entries)." stored range(s) for {$provider} are not canonical CIDR networks.",
+                'Re-run `php artisan security-guard:crawler-ranges:refresh`. The refresh validates before storing, so invalid entries mean the cached document was edited or corrupted. Verification fails closed on them.',
+                ['ranges' => implode(', ', array_slice($invalid, 0, 5))],
+            );
+        }
+
+        if ($this->crawlerRanges->freshRanges($provider) === null) {
+            return DiagnosticResult::failure(
+                $name,
+                "The stored ranges for {$provider} are past their freshness window.",
+                'Refresh them, and schedule the command to run more often than crawler_access.ranges.fresh_for_hours. Stale ranges verify nobody, so the crawler is back on the public policy it was meant to be kept off.',
+                ['fetched_at' => $stored['fetched_at'], 'fresh_until' => $stored['fresh_until']],
+            );
+        }
+
+        return DiagnosticResult::ok(
+            $name,
+            count($stored['v4']).' IPv4 and '.count($stored['v6'])." IPv6 network(s) stored for {$provider} and fresh.",
+            ['fetched_at' => $stored['fetched_at'], 'fresh_until' => $stored['fresh_until']],
+        );
+    }
+
+    /**
+     * @return array<int, DiagnosticResult>
+     */
+    private function checkCrawlerRateLimit(): array
+    {
+        $results = [];
+
+        if ($this->crawlerRateLimiter->actionWasDowngraded()) {
+            $configured = (string) $this->config->get('security-guard.crawler_access.rate_limit.action');
+
+            // The limiter already refuses to honour this, so the runtime is
+            // safe; the failure exists because a config that says one thing
+            // while the system does another is a debugging trap.
+            $results[] = DiagnosticResult::failure(
+                'crawler_rate_limit',
+                "The crawler action \"{$configured}\" is not honoured; requests run as reject_only.",
+                'Use reject_only or service_unavailable. Anything that persists a block is refused for crawlers: a search crawler kept on 403s until someone releases it costs crawling, index refresh and search presence.',
+                ['action' => $configured],
+            );
+        } else {
+            $results[] = DiagnosticResult::ok(
+                'crawler_rate_limit',
+                'Verified crawlers are limited to '.$this->crawlerRateLimiter->limit().' request(s)/minute with '.$this->crawlerRateLimiter->action().'.',
+                ['action' => $this->crawlerRateLimiter->action(), 'limit' => (string) $this->crawlerRateLimiter->limit()],
+            );
+        }
+
+        $configuredLimit = (int) $this->config->get('security-guard.crawler_access.rate_limit.requests_per_minute', 300);
+
+        if ($configuredLimit < 1) {
+            $results[] = DiagnosticResult::warning(
+                'crawler_rate_limit_threshold',
+                "requests_per_minute is {$configuredLimit}, which is normalised to 1.",
+                'Set a deliberate value; one request per minute keeps a verified crawler on near-permanent 429s.',
+                ['configured' => (string) $configuredLimit],
+            );
+        }
+
+        return $results;
+    }
+
+    /**
+     * No verifier may confirm an address nobody's crawler can own.
+     *
+     * 192.0.2.1 and 2001:db8::1 sit in documentation space (RFC 5737 and
+     * RFC 3849): never routed, never inside a provider's published ranges.
+     * A verifier that answers "yes" for either is verifying on the
+     * User-Agent claim alone — the spoofing door this module exists to
+     * keep shut. The bundled verifiers cannot fail this; it guards the
+     * ones hosts register themselves.
+     */
+    private function checkCrawlerVerificationTrust(): DiagnosticResult
+    {
+        $trusting = [];
+
+        foreach ($this->crawlerVerifiers->providers() as $provider) {
+            $verifier = $this->crawlerVerifiers->verifierFor($provider);
+
+            if ($verifier === null) {
+                continue;
+            }
+
+            foreach (['192.0.2.1', '2001:db8::1'] as $address) {
+                try {
+                    $owns = $verifier->ownsAddress($address);
+                } catch (Throwable) {
+                    // The registry degrades a throwing verifier to
+                    // `unverified` at runtime, and the range checks above
+                    // surface the data problems behind it.
+                    continue;
+                }
+
+                if ($owns === true) {
+                    $trusting[] = $provider;
+
+                    break;
+                }
+            }
+        }
+
+        if ($trusting !== []) {
+            return DiagnosticResult::failure(
+                'crawler_verification',
+                'Verifier(s) confirmed a documentation address: '.implode(', ', $trusting).'.',
+                'A verifier must confirm addresses only from its provider\'s published data. One that confirms an address no provider can own is trusting the User-Agent claim, which any client can send.',
+                ['providers' => implode(', ', $trusting)],
+            );
+        }
+
+        return DiagnosticResult::ok(
+            'crawler_verification',
+            'No verifier trusts a User-Agent claim without confirming the address.',
+        );
+    }
+
+    /**
+     * Published crawler ranges do not belong on the ignore list.
+     *
+     * An ignored address skips attack path detection, blocking and rate
+     * limits alike, so pasting a provider's networks there widens far more
+     * than the rate limit relief the host was after — and crawler_access
+     * already provides that relief without giving up the defences.
+     *
+     * @return array<int, DiagnosticResult>
+     */
+    private function checkCrawlerGuardExemption(): array
+    {
+        $rules = [];
+
+        foreach ((array) $this->config->get('security-guard.permanent_block.ignored_ips', []) as $entry) {
+            $range = IpRange::parse((string) $entry);
+
+            if ($range !== null) {
+                $rules[(string) $entry] = $range;
+            }
+        }
+
+        if ($rules === []) {
+            return [];
+        }
+
+        /** @var array<string, array<string, true>> $overlapping rule => provider set */
+        $overlapping = [];
+
+        foreach ($this->crawlerVerifiers->providers() as $provider) {
+            $stored = $this->crawlerRanges->current($provider);
+
+            if ($stored === null) {
+                continue;
+            }
+
+            foreach (array_merge($stored['v4'], $stored['v6']) as $entry) {
+                $published = IpRange::parse($entry);
+
+                if ($published === null) {
+                    continue;
+                }
+
+                foreach ($rules as $written => $rule) {
+                    // CIDR blocks nest or miss entirely, so overlap means one
+                    // network contains the other's first address.
+                    if ($rule->family() === $published->family()
+                        && ($rule->contains($published->network()) || $published->contains($rule->network()))) {
+                        $overlapping[$written][$provider] = true;
+                    }
+                }
+            }
+        }
+
+        if ($overlapping === []) {
+            return [];
+        }
+
+        $described = [];
+
+        foreach ($overlapping as $written => $providers) {
+            $described[] = $written.' ('.implode(', ', array_keys($providers)).')';
+        }
+
+        return [DiagnosticResult::warning(
+            'crawler_guard_exemption',
+            count($overlapping).' ignore rule(s) cover published crawler ranges.',
+            'Remove them from permanent_block.ignored_ips. Ignored addresses bypass attack path detection and blocking entirely; crawler_access already keeps verified crawlers off permanent blocks without giving that up.',
+            ['rules' => implode('; ', array_slice($described, 0, 5))],
+        )];
+    }
+
+    /**
+     * robots.txt steers crawl traffic; it is not a security boundary, and
+     * this package never generates one. The check exists because a site
+     * that starts caring about crawler behaviour without one is usually an
+     * oversight, not a decision.
+     */
+    private function checkRobotsTxt(): DiagnosticResult
+    {
+        $path = $this->app->publicPath('robots.txt');
+
+        if (is_file($path)) {
+            return DiagnosticResult::ok('crawler_robots_txt', 'robots.txt is present.', ['path' => $path]);
+        }
+
+        return DiagnosticResult::warning(
+            'crawler_robots_txt',
+            'No robots.txt was found in the public directory.',
+            'Add one in the host application to steer crawl traffic. It is a hint to well-behaved crawlers, not an access control: keep protecting admin and authenticated areas with middleware.',
+            ['path' => $path],
+        );
+    }
+
+    /**
+     * The store and driver every module-level cache check reasons about.
+     *
+     * @return array{0: string, 1: string} store name, driver
+     */
+    private function configuredCacheDriver(): array
+    {
+        $storeName = $this->config->get('security-guard.cache.store');
+        $storeName = is_string($storeName) && $storeName !== ''
+            ? $storeName
+            : (string) $this->config->get('cache.default');
+
+        return [$storeName, (string) $this->config->get("cache.stores.{$storeName}.driver", $storeName)];
     }
 }

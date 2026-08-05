@@ -11,7 +11,47 @@ migration note.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Verified search crawler groundwork** (#14, toward v0.3.0). Everything
+  below ships dark: `crawler_access.enabled` defaults to `false`, and even
+  when enabled the public middleware does not consult any of it yet, so
+  request behaviour is unchanged. The integration into `GuardPublicRequests`
+  lands separately.
+  - `CrawlerVerifierContract` and `CrawlerVerificationResult`: requests
+    classify as *verified*, *claimed-but-unverified* or *unknown*. The
+    User-Agent only nominates a candidate; verification happens exclusively
+    against the provider's published IP ranges, already cached — never by DNS
+    or HTTP during request handling, and every failure mode degrades to
+    `unverified`, which means the normal public policy.
+  - `security-guard:crawler-ranges:refresh` fetches the published CIDR
+    documents for Google and Bing. Validation is all-or-nothing per document,
+    storage goes through a staged write with readback so a mangling cache
+    cannot replace known-good data, and a failed provider keeps its previous
+    ranges while failing the exit code. The package never schedules the
+    command; the host registers it in its own scheduler.
+  - Range data is trusted for `fresh_for_hours`, then retained (readable, but
+    verifying nobody) for `retain_for_days` so the doctor can tell "stale"
+    from "missing".
+  - `CrawlerRateLimiter`: a per-provider, per-address budget in its own key
+    space — crawler traffic never spends the public budget of the humans
+    behind the same address, and vice versa. Exceeding it answers `429` or
+    `503`, always with `Retry-After`, and never persists a block.
+    `permanent_block` is not an accepted action: configuring it runs as
+    `reject_only` and the doctor reports the mismatch as a failure, because a
+    permanently blocked search crawler keeps eating 403s until a human
+    notices, which costs crawling, index refresh and search presence.
+  - Doctor checks behind `crawler_access.enabled`: no provider registered;
+    range data missing, corrupted or past its freshness window; crawler data
+    on a non-shared cache; a rate-limit action that would persist a block; a
+    limit that normalises to one request per minute; verifiers that confirm
+    documentation addresses (that is, ones trusting the User-Agent alone);
+    `ignored_ips` rules that cover published crawler ranges — a verified
+    crawler must lose the rate limit, not the defences; and a missing
+    `robots.txt` (warning — it steers crawlers, it protects nothing).
+  - README: the three-way classification, refresh scheduling, freshness
+    semantics, why permanent blocks are refused for crawlers, and the
+    `robots.txt` boundary.
 
 ## [0.2.0] - 2026-08-04
 

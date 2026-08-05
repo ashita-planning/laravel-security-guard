@@ -244,6 +244,9 @@ class SecurityGuardServiceProvider extends ServiceProvider
             $app->make(AttackPathMatcherContract::class),
             $app->make(NotifierRegistry::class),
             $app->make(IpMatcherContract::class),
+            $app->make(CrawlerRangeStore::class),
+            $app->make(CrawlerVerifierRegistry::class),
+            $app->make(CrawlerRateLimiter::class),
         ));
 
         $this->app->singleton(CrawlerRangeStore::class, fn ($app): CrawlerRangeStore => new CrawlerRangeStore(
