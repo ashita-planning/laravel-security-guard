@@ -11,9 +11,13 @@ migration note.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.3.0] - 2026-08-05
+
 ### Added
 
-- **Verified search crawler handling** (#14, toward v0.3.0). Off by default
+- **Verified search crawler handling** (#14). Off by default
   (`crawler_access.enabled` is `false`, and while it is, the middleware never
   consults a verifier — v0.2.0 behaviour exactly). When enabled it works
   independently of the public rate limit: verified crawlers get their own
@@ -62,6 +66,42 @@ migration note.
   - README: the three-way classification, refresh scheduling, freshness
     semantics, why permanent blocks are refused for crawlers, and the
     `robots.txt` boundary.
+
+### Upgrading from 0.2.x
+
+No migration and no configuration change is required. While
+`crawler_access.enabled` is false — the default, including for a config file
+published under 0.2.x that has no `crawler_access` key at all — request
+handling is byte-for-byte the v0.2.0 behaviour and no verifier is ever
+constructed.
+
+To enable it, add the `crawler_access` block to your published config (Laravel
+merges only the top level of a package config file, so a published file that
+predates this release will not inherit the new key), then:
+
+1. Schedule `security-guard:crawler-ranges:refresh` and run it once.
+2. Confirm `php artisan security-guard:doctor --strict` reports the range data
+   as stored and fresh.
+3. Set `crawler_access.enabled` to true.
+
+Enabling it before the first refresh is safe but pointless: with no range data
+nothing verifies, so every crawler stays on the public policy.
+
+### Notes
+
+**This release adds an outbound network path.** It is used by
+`security-guard:crawler-ranges:refresh` only — never during request handling,
+which reads cached data and performs no HTTP request and no DNS lookup.
+Installations behind an egress policy need `developers.google.com` and
+`www.bing.com` reachable from wherever the scheduler runs.
+
+The package does not schedule the command; register it yourself. No database
+table is added — range data and crawler counters live in the cache, which
+should be shared across nodes so a refresh on one node serves all of them.
+
+`guzzlehttp/guzzle` is a `suggest`, not a `require`: Laravel applications
+already ship it, and hosts that bind their own `CrawlerRangeFetcherContract`
+need not install it at all.
 
 ## [0.2.0] - 2026-08-04
 
@@ -210,9 +250,11 @@ that date will target Laravel 13 and later.
   matches nothing, which is how a monitoring address ends up unprotected.
   Planned for `v0.2.0`; the comparison is already isolated behind
   `IpMatcherContract`, so it can be added without a breaking change.
+  *(Shipped in 0.2.0.)*
 - The LINE Messaging API adapter is not part of this package. Register a custom
   channel on `NotifierRegistry`.
 
-[Unreleased]: https://github.com/ashita-planning/laravel-security-guard/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ashita-planning/laravel-security-guard/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ashita-planning/laravel-security-guard/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ashita-planning/laravel-security-guard/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ashita-planning/laravel-security-guard/releases/tag/v0.1.0

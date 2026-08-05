@@ -7,6 +7,8 @@ is still inside its own upstream security-fix window.
 
 | Package | Laravel | PHP | Status | Laravel security fixes end |
 | --- | --- | --- | --- | --- |
+| `0.3.x` | 13.x (>= 13.12.0) | 8.3, 8.4, 8.5 | Supported | 2028-03-17 |
+| `0.3.x` | 12.x (>= 12.61.1) | 8.2, 8.3, 8.4 | Supported | 2027-02-24 |
 | `0.2.x` | 13.x (>= 13.12.0) | 8.3, 8.4, 8.5 | Supported | 2028-03-17 |
 | `0.2.x` | 12.x (>= 12.61.1) | 8.2, 8.3, 8.4 | Supported | 2027-02-24 |
 | `0.1.x` | 13.x (>= 13.12.0) | 8.3, 8.4, 8.5 | Supported | 2028-03-17 |
@@ -33,7 +35,8 @@ Please include:
 
 - affected package version, Laravel version and PHP version
 - which module is involved (attack path detection, IP blocking, rate limiting,
-  admin allowlist, submission tokens, notifications, management UI)
+  admin allowlist, submission tokens, notifications, management UI, verified
+  crawler access)
 - what an attacker gains, and the conditions required
 - a minimal reproduction if you have one
 
@@ -69,6 +72,14 @@ Credit is given in the advisory and the changelog unless you ask otherwise.
   anything that reveals host account attributes rather than the stored
   `subject_type` and `subject_id`
 - Any write path reaching the allowlist screen, which is read-only by design
+- A request reaching `verified` crawler status without its address being
+  inside the provider's published ranges — including through a spoofed
+  User-Agent, missing, stale or corrupted range data, or a failure in the
+  verifier, registry or cache
+- A verified crawler bypassing IP blocking, attack path detection or the
+  ignore list, which verification must never excuse
+- Range data written from a source other than the configured provider URLs, or
+  a malformed document replacing known-good ranges
 
 ### Out of scope
 
@@ -107,6 +118,20 @@ input of business routes — those still need their own FormRequests.
   screen is read-only and ships disabled behind its own opt-in; the package
   registers no route that creates, edits or deletes an allowlist rule.
 - **Responses are fixed strings.** Nothing from the request is reflected back.
+- **A User-Agent never verifies a crawler.** Both Google and Bing document
+  theirs as spoofable, so the header only nominates a candidate; the decision
+  is made against published address ranges. Every failure to confirm —
+  including no data, expired data and a throwing verifier — yields
+  `unverified`, which means the ordinary public policy: neither crawler
+  privileges nor punishment.
+- **Request handling never reaches the network.** Crawler verification reads
+  cached data only. The single outbound path in the package is
+  `security-guard:crawler-ranges:refresh`, which validates a document
+  completely before storing it and keeps the previous data on any failure.
+- **A verified crawler is never permanently blocked for its rate.** Exceeding
+  the crawler budget answers 429 or 503 with `Retry-After` and records
+  nothing, and a failure in the crawler limiter itself fails open rather than
+  falling back to a public policy that could block the crawler outright.
 - **Host-supplied regular expressions are attacker-adjacent.** They are
   compiled defensively and an invalid pattern is skipped rather than raised,
   but a pathological pattern can still cause backtracking. Review additions to
