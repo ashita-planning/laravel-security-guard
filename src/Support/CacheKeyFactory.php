@@ -89,6 +89,25 @@ final class CacheKeyFactory
     }
 
     /**
+     * Published crawler ranges for one provider. The provider id is
+     * code-defined and identifier-shaped, so it appears unhashed for
+     * debuggability — unlike client addresses, it is not sensitive.
+     */
+    public function crawlerRanges(string $provider): string
+    {
+        return $this->key('crawler-ranges', $provider);
+    }
+
+    /**
+     * Staging slot for a refresh in progress. Written, read back, and only a
+     * byte-identical readback is promoted to the live key.
+     */
+    public function crawlerRangesStaging(string $provider): string
+    {
+        return $this->key('crawler-ranges-staging', $provider);
+    }
+
+    /**
      * A drained window held while its delivery job runs.
      *
      * A queue retry restores the job from its original payload, so anything the

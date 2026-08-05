@@ -9,6 +9,7 @@ use Apkk\LaravelSecurityGuard\Console\AdminIpListCommand;
 use Apkk\LaravelSecurityGuard\Console\AdminIpRevokeCommand;
 use Apkk\LaravelSecurityGuard\Console\BlockedListCommand;
 use Apkk\LaravelSecurityGuard\Console\BlockedReleaseCommand;
+use Apkk\LaravelSecurityGuard\Console\CrawlerRangesRefreshCommand;
 use Apkk\LaravelSecurityGuard\Console\DoctorCommand;
 use Apkk\LaravelSecurityGuard\Console\StatusCommand;
 use Apkk\LaravelSecurityGuard\Contracts\AdminAllowedIpRepositoryContract;
@@ -16,9 +17,12 @@ use Apkk\LaravelSecurityGuard\Contracts\AdminSubjectResolverContract;
 use Apkk\LaravelSecurityGuard\Contracts\AttackPathMatcherContract;
 use Apkk\LaravelSecurityGuard\Contracts\BlockedIpRepositoryContract;
 use Apkk\LaravelSecurityGuard\Contracts\ClientIpResolverContract;
+use Apkk\LaravelSecurityGuard\Contracts\CrawlerRangeFetcherContract;
 use Apkk\LaravelSecurityGuard\Contracts\IpMatcherContract;
 use Apkk\LaravelSecurityGuard\Contracts\SecurityEventDispatcherContract;
+use Apkk\LaravelSecurityGuard\Crawlers\CrawlerRangeStore;
 use Apkk\LaravelSecurityGuard\Crawlers\CrawlerVerifierRegistry;
+use Apkk\LaravelSecurityGuard\Crawlers\HttpCrawlerRangeFetcher;
 use Apkk\LaravelSecurityGuard\Http\Middleware\EnsureAdminIpIsAllowed;
 use Apkk\LaravelSecurityGuard\Http\Middleware\GuardPublicRequests;
 use Apkk\LaravelSecurityGuard\Notifications\LogErrorEventNotifier;
@@ -97,6 +101,7 @@ class SecurityGuardServiceProvider extends ServiceProvider
                 AdminIpRevokeCommand::class,
                 StatusCommand::class,
                 DoctorCommand::class,
+                CrawlerRangesRefreshCommand::class,
             ]);
         }
     }
@@ -148,6 +153,7 @@ class SecurityGuardServiceProvider extends ServiceProvider
         );
         $this->app->singleton(AdminSubjectResolverContract::class, ConfigAdminSubjectResolver::class);
         $this->app->singleton(SecurityEventDispatcherContract::class, QueuedSecurityEventDispatcher::class);
+        $this->app->singleton(CrawlerRangeFetcherContract::class, HttpCrawlerRangeFetcher::class);
     }
 
     private function registerServices(): void
@@ -229,6 +235,13 @@ class SecurityGuardServiceProvider extends ServiceProvider
             $app->make(AttackPathMatcherContract::class),
             $app->make(NotifierRegistry::class),
             $app->make(IpMatcherContract::class),
+        ));
+
+        $this->app->singleton(CrawlerRangeStore::class, fn ($app): CrawlerRangeStore => new CrawlerRangeStore(
+            $app->make(self::CACHE),
+            $app->make(CacheKeyFactory::class),
+            $app->make(ConfigRepository::class),
+            $app->make(FailureLogger::class),
         ));
 
         // Empty until the bundled verifiers land: with none registered, every

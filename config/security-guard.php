@@ -214,6 +214,32 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Search crawler range data
+    |--------------------------------------------------------------------------
+    |
+    | Published IP ranges of the known search crawlers, refreshed by
+    | `security-guard:crawler-ranges:refresh`. The package never schedules
+    | that command; register it in your own scheduler. Verification and the
+    | crawler rate limit build on this data in later config keys.
+    |
+    | Data is trusted for `fresh_for_hours`, then retained (visible to the
+    | doctor, trusted by nobody) for `retain_for_days`.
+    |
+    */
+
+    'crawler_access' => [
+        'ranges' => [
+            'sources' => [
+                'google' => 'https://developers.google.com/static/search/apis/ipranges/googlebot.json',
+                'bing' => 'https://www.bing.com/toolbox/bingbot.json',
+            ],
+            'fresh_for_hours' => 168,
+            'retain_for_days' => 30,
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | IP rule review thresholds
     |--------------------------------------------------------------------------
     |
