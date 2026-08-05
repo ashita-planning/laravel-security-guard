@@ -214,7 +214,7 @@ Schedule::command('security-guard:crawler-ranges:refresh')->daily();
 
     'ranges' => [
         'sources' => [
-            'google' => 'https://developers.google.com/static/search/apis/ipranges/googlebot.json',
+            'google' => 'https://developers.google.com/static/crawling/ipranges/common-crawlers.json',
             'bing' => 'https://www.bing.com/toolbox/bingbot.json',
         ],
         'fresh_for_hours' => 168,

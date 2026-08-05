@@ -271,7 +271,14 @@ class CrawlerRangeRefreshTest extends TestCase
 
         $this->assertArrayHasKey('google', $sources);
         $this->assertArrayHasKey('bing', $sources);
-        $this->assertStringStartsWith('https://', $sources['google']);
+
+        // Google's documented location since 2026-03 is /crawling/ipranges/.
+        // The old /search/apis/ipranges/ path only redirects there, and a
+        // release should not depend on a transition-period redirect.
+        $this->assertSame(
+            'https://developers.google.com/static/crawling/ipranges/common-crawlers.json',
+            $sources['google'],
+        );
         $this->assertStringStartsWith('https://', $sources['bing']);
     }
 }
