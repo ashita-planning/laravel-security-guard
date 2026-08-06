@@ -276,7 +276,7 @@ class SupportMatrixTest extends TestCase
 
         foreach ($ciMajors as $major) {
             $this->assertMatchesRegularExpression(
-                "/\|\s*{$major}\.x\s*\|[^|]*\|\s*正式対応\s*\|/u",
+                "/\|\s*{$major}\.x\s*\|[^|]*\|\s*Supported\s*\|/u",
                 $readme,
                 "README does not list Laravel {$major}.x as supported.",
             );
@@ -284,7 +284,7 @@ class SupportMatrixTest extends TestCase
 
         foreach (['10', '11'] as $major) {
             $this->assertMatchesRegularExpression(
-                "/\|\s*{$major}\.x\s*\|[^|]*\|\s*対応対象外\s*\|/u",
+                "/\|\s*{$major}\.x\s*\|[^|]*\|\s*Unsupported\s*\|/u",
                 $readme,
                 "README does not mark Laravel {$major}.x as unsupported.",
             );
@@ -312,13 +312,13 @@ class SupportMatrixTest extends TestCase
         $this->assertMatchesRegularExpression('/CIDR/u', $readme);
 
         $this->assertStringContainsString(
-            'ファミリを跨ぎません',
+            'does not cross IP families',
             $readme,
             'The README must state that an IPv4 rule does not admit IPv4-mapped IPv6.',
         );
 
         $this->assertStringContainsString(
-            '何にも一致しません',
+            'matches nothing',
             $readme,
             'The README must state that an unparseable rule matches nothing rather than everything.',
         );

@@ -16,6 +16,17 @@ It is **not** a replacement for a WAF, CDN, web-server hardening, or secure appl
 - A database connection for the package tables
 - A shared, atomic cache store when the application runs in more than one process or server
 
+## Support policy
+
+Only Laravel majors that are within Laravel's security-fix window are supported.
+
+| Laravel | PHP | Support status |
+| --- | --- | --- |
+| 13.x | 8.3 / 8.4 / 8.5 | Supported |
+| 12.x | 8.2 / 8.3 / 8.4 | Supported |
+| 11.x | — | Unsupported |
+| 10.x | — | Unsupported |
+
 ## Install
 
 ```bash
@@ -109,6 +120,10 @@ Before production, add monitoring, office, and maintenance addresses to `permane
 | Management UI | Disabled | Reviewing and releasing blocked IP addresses behind authentication and authorization |
 
 Every module has its own enablement and exclusion rules. Do not enable rate limits, allowlists, notifications, or crawler handling until their dependencies and failure behaviour have been reviewed.
+
+## CIDR safety
+
+Ignored-IP and administrator allowlist rules accept individual IP addresses and CIDR networks. An IPv4 rule **does not cross IP families**: it never matches an IPv4-mapped IPv6 address. An invalid or unparseable rule **matches nothing**, never every address.
 
 ## Common commands
 
