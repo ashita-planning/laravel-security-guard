@@ -1,6 +1,8 @@
 /vendor/
 /build/
-/docs/
+/docs/*
+!/docs/ja/
+!/docs/ja/configuration-and-operations.md
 /.phpunit.cache/
 composer.lock
 .phpunit.result.cache
